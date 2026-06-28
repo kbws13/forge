@@ -6,7 +6,7 @@
 
 ### Runtime and Model
 
-- [ ] AgentRuntime facade with async event streaming.
+- [x] AgentRuntime facade with async event streaming.
 - [ ] Message and event model.
 - [ ] Input normalization for prompts, commands, and attachments.
 - [ ] System prompt builder with project rules and memory.
