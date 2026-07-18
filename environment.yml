@@ -1,5 +1,0 @@
-name: forge
-channels:
-  - defaults
-dependencies:
-  - python=3.13
