@@ -9,10 +9,12 @@ from kbws_forge_runtime.workflow._builders import (
     build_parallel,
     build_sequence,
 )
+from kbws_forge_runtime.workflow.graph import ChatGraph
 from kbws_forge_runtime.workflow.state import WorkflowState
 
 __all__ = [
     "AgentStep",
+    "ChatGraph",
     "WorkflowState",
     "build_chat_graph",
     "build_parallel",

@@ -23,6 +23,7 @@ from kbws_forge_runtime.models import (
     agents,
 )
 from kbws_forge_runtime.plugins import Plugin
+from kbws_forge_runtime.workflow.graph import ChatGraph
 
 
 class AgentRuntime:
@@ -35,7 +36,7 @@ class AgentRuntime:
         self._sessions = SessionManager()
         self._plugins = tuple(plugins)
 
-    def register_agent(self, info: AgentInfo, graph: object) -> None:
+    def register_agent(self, info: AgentInfo, graph: ChatGraph) -> None:
         agent = GraphAgent(info=info, graph=graph)
         self._registry.register(AgentHandle(info=info, graph=agent))
 

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
@@ -18,14 +20,17 @@ class AgentStep:
     output_key: str | None = None
 
 
-async def _run_step(step: AgentStep, state: WorkflowState) -> dict[str, Any]:
+async def _run_step(
+    step: AgentStep, state: WorkflowState, config: RunnableConfig
+) -> dict[str, Any]:
     result = await step.graph.ainvoke(
         {
             "messages": state.get("messages", []),
             "outputs": state.get("outputs", {}),
             "round": state.get("round", 0),
             "stop": state.get("stop", False),
-        }
+        },
+        config=config,
     )
     messages = result.get("messages", [])
     last = messages[-1] if messages else None
@@ -43,16 +48,22 @@ async def _run_step(step: AgentStep, state: WorkflowState) -> dict[str, Any]:
     return update
 
 
-def _step_node(step: AgentStep) -> Callable[[WorkflowState], Any]:
-    async def run(state: WorkflowState) -> dict[str, Any]:
-        return await _run_step(step, state)
+def _step_node(step: AgentStep) -> Callable[[WorkflowState, RunnableConfig], Any]:
+    async def run(state: WorkflowState, config: RunnableConfig) -> dict[str, Any]:
+        return await _run_step(step, state, config)
 
     return run
 
 
 def _compile(builder: StateGraph, checkpointer: Any = None) -> Any:
+    """Compile a graph.
+
+    ``checkpointer=None`` uses the SDK default (in-memory session memory) so
+    conversation history survives across calls in the same session. Pass your
+    own langgraph saver to persist elsewhere.
+    """
     if checkpointer is None:
-        return builder.compile()
+        checkpointer = InMemorySaver()
     return builder.compile(checkpointer=checkpointer)
 
 
@@ -63,7 +74,7 @@ def build_sequence(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
     # noinspection PyTypeChecker
     builder = StateGraph(WorkflowState)
     for step in steps:
-        builder.add_node(step.name, _step_node(step))
+        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
     builder.add_edge(START, steps[0].name)
     for current, following in zip(steps, steps[1:], strict=False):
         builder.add_edge(current.name, following.name)
@@ -83,7 +94,7 @@ def build_parallel(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
 
     builder.add_node("join", join)
     for step in steps:
-        builder.add_node(step.name, _step_node(step))
+        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
         builder.add_edge(START, step.name)
         builder.add_edge(step.name, "join")
     builder.add_edge("join", END)
@@ -102,7 +113,7 @@ def build_loop(
         raise ValueError("max_rounds must be positive")
     builder = StateGraph(WorkflowState)
     for step in steps:
-        builder.add_node(step.name, _step_node(step))
+        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
 
     async def round_end(state: WorkflowState) -> dict[str, Any]:
         return {"round": state.get("round", 0) + 1}

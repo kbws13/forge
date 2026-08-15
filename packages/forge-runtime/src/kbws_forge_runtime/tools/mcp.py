@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from langchain_core.tools import BaseTool
 
@@ -52,5 +53,7 @@ class McpToolLoader:
                 "MCP support is not installed; install kbws-forge-runtime-demo[mcp]"
             ) from exc
 
-        client = MultiServerMCPClient(self.adapter_config())
+        # 配置字典与 langchain_mcp_adapters 的 Connection 结构一致，但它是可选依赖，
+        # 不能在此处静态引用其类型，故 cast 为 Any 绕过。
+        client = MultiServerMCPClient(cast(Any, self.adapter_config()))
         return list(await client.get_tools())

@@ -32,7 +32,10 @@ async def test_sequence_passes_real_output_into_later_prompt(real_model: ChatOpe
         ]
     )
 
-    result = await graph.ainvoke({"messages": [HumanMessage(content="Create a draft.")]})
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Create a draft.")]},
+        config={"configurable": {"thread_id": "seq-test"}},
+    )
 
     assert "DRAFT_OK" in result["outputs"]["generated_code"]
     assert "REVIEW_OK" in result["outputs"]["review_comments"]
@@ -56,7 +59,10 @@ async def test_parallel_agents_run_real_models_and_keep_named_outputs(
         ]
     )
 
-    result = await graph.ainvoke({"messages": [HumanMessage(content="Analyze this topic.")]})
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Analyze this topic.")]},
+        config={"configurable": {"thread_id": "par-test"}},
+    )
 
     assert "PRODUCT_OK" in result["outputs"]["product_view"]
     assert "ENGINEERING_OK" in result["outputs"]["engineering_view"]
@@ -76,7 +82,10 @@ async def test_loop_runs_real_agent_for_the_configured_round_count(
         max_rounds=2,
     )
 
-    result = await graph.ainvoke({"messages": [HumanMessage(content="Refine this.")]})
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Refine this.")]},
+        config={"configurable": {"thread_id": "loop-test"}},
+    )
 
     assert result["round"] == 2
     assert "LOOP_OK" in result["outputs"]["draft"]
@@ -93,7 +102,10 @@ async def test_loop_stops_from_real_agent_output(real_model: ChatOpenAI) -> None
         stop_when=lambda state: "STOP_OK" in state.get("outputs", {}).get("draft", ""),
     )
 
-    result = await graph.ainvoke({"messages": [HumanMessage(content="Finish this.")]})
+    result = await graph.ainvoke(
+        {"messages": [HumanMessage(content="Finish this.")]},
+        config={"configurable": {"thread_id": "loop-finish"}},
+    )
 
     assert result["round"] == 1
     assert "STOP_OK" in result["outputs"]["draft"]

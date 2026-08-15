@@ -18,6 +18,7 @@ from kbws_forge_runtime.models import (
     ToolFinished,
     ToolStarted,
 )
+from kbws_forge_runtime.workflow.graph import ChatGraph
 
 
 def _part_block(part: Any) -> dict[str, Any]:
@@ -44,7 +45,7 @@ def _part_block(part: Any) -> dict[str, Any]:
 
 def to_langchain_message(message: ChatMessage) -> HumanMessage:
     if all(hasattr(part, "text") for part in message.parts):
-        content: str | list[dict[str, Any]] = message.text
+        content: str | list[str | dict[Any, Any]] = message.text
     else:
         content = [_part_block(part) for part in message.parts]
     return HumanMessage(content=content)
@@ -75,7 +76,7 @@ def _last_message(values: dict[str, Any]) -> AnyMessage | None:
 @dataclass(slots=True)
 class GraphAgent:
     info: AgentInfo
-    graph: Any
+    graph: ChatGraph
 
     async def stream(
         self, message: ChatMessage, *, run_id: str, session_id: str
@@ -115,6 +116,9 @@ class GraphAgent:
                 )
             elif event_name == "on_tool_end":
                 output = data.get("output")
+                content = getattr(output, "content", None)
+                if content is not None:
+                    output = content
                 if not isinstance(output, str):
                     output = json.dumps(output, ensure_ascii=False, default=str)
                 yield ToolFinished(
