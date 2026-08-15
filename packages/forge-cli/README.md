@@ -1,44 +1,86 @@
 # kbws-forge-cli
 
-Forge 的 CLI 与脚手架生成器（PyPI 发布名：`kbws-forge-cli`），用于创建编码代理项目。
+[![PyPI version](https://img.shields.io/pypi/v/kbws-forge-cli)](https://pypi.org/project/kbws-forge-cli/)
+[![Python versions](https://img.shields.io/pypi/pyversions/kbws-forge-cli)](https://pypi.org/project/kbws-forge-cli/)
+[![License](https://img.shields.io/pypi/l/kbws-forge-cli)](https://pypi.org/project/kbws-forge-cli/)
 
-## 安装
+Scaffolding CLI for coding-agent projects, powered by
+[kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/). Generate a
+production-shaped FastAPI agent service in seconds — layered architecture,
+authentication, multi-environment config, persistent logging and a full test
+suite, out of the box.
+
+## Install
 
 ```bash
 pip install kbws-forge-cli
 ```
 
-## 用法
+Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/).
+
+## Usage
+
+Run `forge init` and answer the prompts (Vite-style interactive picker):
 
 ```bash
-forge init my-agent                # 默认模板：service-agent（完整分层服务）
-forge init my-hello -t base-agent  # 可选：最小 FastAPI HelloWorld
-cd my-agent
-uv sync
-uv run uvicorn app.main:app --reload
+forge init
+✔ Project name: … my-agent
+✔ Select a template: › service-agent
 ```
 
-> `--template/-t` 保留用于以后多模板选择（届时也会支持交互式选择）；当前默认即 `service-agent`。
+Or pass everything explicitly for non-interactive/scripted use:
 
-## 模板
+```bash
+forge init my-agent                       # name given, template picked interactively
+forge init my-agent -t base-agent         # fully non-interactive
+```
 
-| 模板 | 说明 |
+Then start developing:
+
+```bash
+cd my-agent
+uv sync                                   # installs kbws-forge-runtime from PyPI
+uv run uvicorn app.main:app --reload      # dev server
+uv run pytest                             # tests (fake models, no cost)
+```
+
+## Templates
+
+| Template | Description |
 | --- | --- |
-| `base-agent` | 最小 FastAPI HelloWorld，快速起步 |
-| `service-agent` | 完整分层服务：业务聚合（`agents/`）+ 技术分层（`app/`），含全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试；依赖已发布的 `kbws-forge-runtime` |
+| `service-agent` *(default)* | Full layered service: business aggregation (`agents/`) + technical layering (`app/`), global exception handling, unified `{code, info, data}` responses, API-key auth, multi-environment config, persistent JSON logging, request-id tracing, and unit/API/integration tests |
+| `base-agent` | Minimal FastAPI Hello World for a quick start |
 
-`service-agent` 生成的项目结构：
+New templates placed in the CLI's `templates/` directory appear in the
+interactive picker automatically.
+
+## Generated project
+
+`forge init my-service` produces:
 
 ```
 my-service/
-├── agents/<module_name>/     # 业务聚合：agent.py + prompts.py + tools.py
-├── app/                      # 技术分层：core / api / schemas / services / providers
-├── tests/                    # unit / api / integration（真实 provider 开关控制）
+├── agents/<module_name>/     # business units: agent.py + prompts.py + tools.py
+│   ├── agent.py              #   exports `agent` (auto-discovered by load_agents)
+│   ├── prompts.py            #   composable Prompt components (code-first)
+│   └── tools.py              #   this agent's tools
+├── app/                      # technical layering
+│   ├── main.py               #   create_app() + lifespan (load_agents)
+│   ├── core/                 #   config / errors / response / security / logging
+│   ├── api/v1/               #   agents / sessions / chat / chat_stream / health
+│   ├── schemas/              #   request & response models
+│   ├── services/             #   chat orchestration
+│   └── providers/            #   LLM factory
+├── tests/                    # unit / api / integration (real-provider gated)
 ├── scripts/run.sh
-└── .env.example
+└── .env.example              # multi-env config template
 ```
 
-## 开发
+Endpoints: `GET /api/v1/health` · `GET /api/v1/agents` · `POST /api/v1/sessions` ·
+`POST /api/v1/chat` · `POST /api/v1/chat_stream` (SSE), all behind
+`X-API-Key` / `Bearer` auth except health.
+
+## Development
 
 ```bash
 uv sync
