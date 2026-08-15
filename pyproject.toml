@@ -1,7 +1,13 @@
-[project]
-name = "forge"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+# Forge monorepo（uv workspace 根，非可发布包）
+[tool.uv.workspace]
+members = ["packages/*"]
+
+# 注意：kbws-forge-cli 不依赖 kbws-forge-runtime；
+# 只有 cli 生成的模板项目（base-agent 等）才依赖 runtime，
+# 届时在模板项目的 pyproject 里声明即可。
+
+# 工作区共享的开发依赖
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+]

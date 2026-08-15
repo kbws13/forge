@@ -1,0 +1,28 @@
+[project]
+name = "kbws-forge-cli"
+version = "0.1.0"
+description = "Forge CLI: agent scaffolding generator"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+authors = [
+    { name = "kbws13", email = "kbws13@163.com" },
+]
+keywords = ["coding-agent", "cli", "scaffold", "generator"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.scripts]
+forge = "kbws_forge_cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kbws_forge_cli"]
