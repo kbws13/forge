@@ -2,13 +2,64 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+import questionary
 import typer
 from pydantic import ValidationError
 from rich.console import Console
 
 from kbws_forge_cli.generator import Generator, ProjectSpec
+
+TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+DEFAULT_TEMPLATE = "service-agent"
+
+
+def _available_templates() -> list[str]:
+    """动态扫描模板目录，新增模板自动出现在选择列表里。"""
+    return sorted(
+        d.name for d in TEMPLATES_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")
+    )
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def _prompt_name() -> str:
+    return questionary.text(
+        "Project name",
+        default="my-agent",
+        validate=lambda value: bool(value.strip()) or "project name cannot be empty",
+    ).ask()
+
+
+def _prompt_template() -> str:
+    choices = _available_templates()
+    selected = questionary.select(
+        "Select a template",
+        choices=choices,
+        default=DEFAULT_TEMPLATE,
+    ).ask()
+    return selected or DEFAULT_TEMPLATE
+
+
+def _resolve_name(name: str | None) -> str:
+    if name is not None:
+        return name
+    if not _is_interactive():
+        raise typer.BadParameter("project name is required in non-interactive mode")
+    return _prompt_name()
+
+
+def _resolve_template(template: str | None) -> str:
+    if template is not None:
+        return template
+    if not _is_interactive():
+        return DEFAULT_TEMPLATE
+    return _prompt_template()
+
 
 app = typer.Typer(
     name="forge",
@@ -33,19 +84,28 @@ def main(
 
 @app.command("init")
 def init_command(
-    name: str = typer.Argument(..., help="Name of the agent project, e.g. my-agent."),
-    template: str = typer.Option(
-        "service-agent",
+    name: str | None = typer.Argument(
+        None, help="Name of the agent project, e.g. my-agent. Omit for interactive input."
+    ),
+    template: str | None = typer.Option(
+        None,
         "--template",
         "-t",
-        help="Template to use (service-agent | base-agent | cloudtest-agent).",
+        help=f"Template to use. Defaults to {DEFAULT_TEMPLATE} when omitted.",
     ),
     force: bool = typer.Option(
         False, "--force", help="Overwrite the target directory if it already exists."
     ),
 ) -> None:
-    """Scaffold a new agent project in the current directory."""
+    """Scaffold a new agent project.
+
+    Interactive prompts (Vite-style) when arguments are omitted; fully
+    non-interactive when name/template are provided or stdin is not a TTY.
+    """
     console = Console()
+
+    name = _resolve_name(name)
+    template = _resolve_template(template)
 
     try:
         spec = ProjectSpec(name=name, template=template)
@@ -80,7 +140,7 @@ def init_command(
     console.print("\n[bold]Next steps:[/bold]")
     console.print(f"  cd {spec.name}")
     console.print("  uv sync")
-    console.print("  uv run fastapi dev")
+    console.print("  uv run uvicorn app.main:app --reload")
 
 
 if __name__ == "__main__":

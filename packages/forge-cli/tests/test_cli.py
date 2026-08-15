@@ -63,6 +63,34 @@ def test_init_rejects_unknown_template(tmp_path, monkeypatch) -> None:
     assert "Unknown template" in result.output
 
 
+def test_interactive_prompts_when_args_omitted(tmp_path, monkeypatch) -> None:
+    """交互模式：缺参数时询问项目名和模板（Vite 风格）。"""
+    monkeypatch.setattr("kbws_forge_cli.cli._is_interactive", lambda: True)
+    monkeypatch.setattr("kbws_forge_cli.cli._prompt_name", lambda: "interactive-agent")
+    monkeypatch.setattr("kbws_forge_cli.cli._prompt_template", lambda: "service-agent")
+
+    result = _invoke_in(tmp_path, monkeypatch, "init")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "interactive-agent" / "app" / "main.py").is_file()
+    assert "service-agent" in result.output
+
+
+def test_non_interactive_without_name_fails(tmp_path, monkeypatch) -> None:
+    """非交互（CI/管道）且缺项目名：明确报错而不是挂起。"""
+    monkeypatch.setattr("kbws_forge_cli.cli._is_interactive", lambda: False)
+    result = _invoke_in(tmp_path, monkeypatch, "init")
+    assert result.exit_code != 0
+    assert "project name is required" in result.output
+
+
+def test_templates_discovered_dynamically() -> None:
+    from kbws_forge_cli.cli import _available_templates
+
+    templates = _available_templates()
+    assert "service-agent" in templates
+    assert "base-agent" in templates
+
+
 def test_init_refuses_non_empty_existing_dir(tmp_path, monkeypatch) -> None:
     existing = tmp_path / "my-agent"
     existing.mkdir()
