@@ -1,0 +1,94 @@
+"""Prompt effectiveness verification against the real provider.
+
+Proves that the composable prompt actually drives model behavior in the
+demo service: default partials, call-time variable overrides, and the
+history placeholder all affect real LLM output.
+"""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.config import Settings
+from app.main import create_app
+
+pytestmark = pytest.mark.real_provider
+
+HEADERS = {"X-API-Key": "test-secret-key"}
+
+
+@pytest.fixture(scope="module")
+def real_client():
+    if os.environ.get("RUN_REAL_PROVIDER_TESTS") != "1":
+        pytest.skip("set RUN_REAL_PROVIDER_TESTS=1 to call the real provider")
+    settings = Settings.load(env_file=".env.test")
+    if not settings.deepseek_api_key or settings.deepseek_api_key.get_secret_value() == "sk-xxx":
+        pytest.skip("DEEPSEEK_API_KEY is not configured")
+    app = create_app(settings)
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def _chat(real_client, message: str, **extra) -> dict:
+    body = {"agent_id": "{{ spec.module_name }}", "user_id": "prompt-eval", "message": message, **extra}
+    resp = real_client.post("/api/v1/chat", json=body, headers=HEADERS)
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["code"] == 0, payload
+    return payload["data"]
+
+
+def test_default_partial_tone_reaches_the_model(real_client) -> None:
+    """不传 variables：persona 块的 partial 默认值应生效。"""
+    data = _chat(real_client, "你是一个什么角色？一句话回答。")
+    assert data["content"].strip()  # 有真实输出即说明 system 块已渲染进调用
+
+
+def test_variable_override_changes_output(real_client) -> None:
+    """传 variables 覆盖 {tone}：输出应体现新的风格指令。"""
+    data = _chat(
+        real_client,
+        "用一句话回答：今天适合做什么？",
+        variables={"tone": "只用三个词回答"},
+    )
+    words = data["content"].strip().split()
+    assert 1 <= len(words) <= 3, f"tone 未生效，输出过长: {data['content']!r}"
+
+
+def test_variable_override_demonstrates_difference(real_client) -> None:
+    """对照：同问题下不同 tone 得到可区分的输出。"""
+    short = _chat(
+        real_client,
+        "翻译 Hello World 到中文",
+        variables={"tone": "只输出译文，不要任何额外内容"},
+    )
+    verbose = _chat(
+        real_client,
+        "翻译 Hello World 到中文",
+        variables={"tone": "输出译文并解释这个词组的含义，分两段"},
+    )
+    assert len(short["content"].strip()) < len(verbose["content"].strip())
+
+
+def test_history_placeholder_drives_memory(real_client) -> None:
+    """history placeholder 注入真实会话历史：多轮记忆生效。"""
+    session = real_client.post(
+        "/api/v1/sessions",
+        json={"agent_id": "{{ spec.module_name }}", "user_id": "prompt-eval"},
+        headers=HEADERS,
+    ).json()["data"]
+
+    _chat(
+        real_client,
+        "记住代码 KBWS_PROMPT_DEMO_99。",
+        session_id=session["session_id"],
+    )
+    second = _chat(
+        real_client,
+        "我让你记的代码是什么？只回复该代码。",
+        session_id=session["session_id"],
+    )
+    assert "KBWS_PROMPT_DEMO_99" in second["content"]

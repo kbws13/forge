@@ -1,0 +1,15 @@
+# 环境与密钥
+.env
+.env.dev
+.env.prod
+.env.test
+.venv/
+
+# 日志
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+dist/
+.idea/

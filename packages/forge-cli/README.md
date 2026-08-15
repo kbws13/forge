@@ -11,13 +11,30 @@ pip install kbws-forge-cli
 ## 用法
 
 ```bash
-forge init my-agent
-cd my-agent
+forge init my-agent                # 默认模板：base-agent（FastAPI HelloWorld）
+forge init my-service -t service-agent   # service-agent：完整分层服务
+cd my-service
 uv sync
-uv run fastapi dev
+uv run uvicorn app.main:app --reload
 ```
 
-生成的 `my-agent` 是一个基于 FastAPI 的最小后端，访问 http://127.0.0.1:8000 可看到 `{"message": "Hello World"}`。
+## 模板
+
+| 模板 | 说明 |
+| --- | --- |
+| `base-agent` | 最小 FastAPI HelloWorld，快速起步 |
+| `service-agent` | 完整分层服务：业务聚合（`agents/`）+ 技术分层（`app/`），含全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试；依赖已发布的 `kbws-forge-runtime` |
+
+`service-agent` 生成的项目结构：
+
+```
+my-service/
+├── agents/<module_name>/     # 业务聚合：agent.py + prompts.py + tools.py
+├── app/                      # 技术分层：core / api / schemas / services / providers
+├── tests/                    # unit / api / integration（真实 provider 开关控制）
+├── scripts/run.sh
+└── .env.example
+```
 
 ## 开发
 

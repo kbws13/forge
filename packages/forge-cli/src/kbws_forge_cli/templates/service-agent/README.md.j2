@@ -1,0 +1,81 @@
+# {{ spec.name }} Agent Service
+
+基于 [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) 的分层 FastAPI Agent 服务，由 [forge](https://github.com/kbws13/forge) 的 `{{ spec.template }}` 模板生成。
+
+## 架构设计
+
+整个项目沿**两条正交的轴**组织：
+
+1. **业务聚合轴（`agents/`）**：一个 agent = 一个目录，prompt / tools / agent 定义全部内聚。
+2. **技术分层轴（`app/`）**：跨 agent 的基础设施与交互层（配置 / 异常 / 鉴权 / 日志 / 路由 / 编排）。
+
+```
+{{ spec.name }}/
+├── agents/                          # ★ 业务聚合层：一个子目录 = 一个 agent
+│   └── {{ spec.module_name }}/      #   agent_id = {{ spec.module_name }}
+│       ├── agent.py                 #   Agent 定义（导出 `agent` 对象，SDK 自动发现）
+│       ├── prompts.py               #   代码化 prompt 组件（人设/指令块）
+│       └── tools.py                 #   本 agent 的工具
+├── app/                             # 技术分层
+│   ├── main.py                      #   create_app() 工厂 + lifespan：load_agents 自动注册
+│   ├── core/                        #   基础设施（config/enums/exceptions/handlers/response/security/logging/utils）
+│   ├── middleware/request_id.py     #   请求追踪 ID
+│   ├── api/v1/                      #   controller 层（agents/sessions/chat/health）
+│   ├── schemas/                     #   dto/vo
+│   ├── services/chat_service.py     #   业务编排 + SDK 错误码转换
+│   └── providers/llm.py             #   model 工厂
+├── tests/                           # unit / api / integration(真实 provider)
+├── scripts/run.sh                   # 启动脚本
+└── .env.example                     # 配置模板
+```
+
+## 配置
+
+全部配置集中在 `app/core/config.py`（pydantic-settings），加载顺序：`.env` → `.env.{APP_ENV}` → 真实环境变量。
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `APP_ENV` | `dev` | 环境：`dev` / `prod` / `test` |
+| `DEBUG` | `false` | 是否开启 /docs 调试文档 |
+| `API_KEY` | 空 | 服务鉴权 key（`X-API-Key` 或 Bearer 头）；为空则鉴权关闭（仅限本地调试） |
+| `LOG_DIR` | `logs` | 日志目录 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
+| `AGENTS_DIR` | `agents` | 业务聚合层根目录 |
+| `DEEPSEEK_API_KEY` | 必填 | 模型供应商 key |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型 API 地址 |
+| `DEEPSEEK_MODEL` | `deepseek-chat` | 模型名 |
+
+## 运行
+
+```bash
+uv sync
+cp .env.example .env.dev    # 填入 DEEPSEEK_API_KEY
+./scripts/run.sh            # 默认 dev，带热重载
+APP_ENV=prod ./scripts/run.sh
+```
+
+接口：`GET /api/v1/health`（无鉴权）、`GET /api/v1/agents`、`POST /api/v1/sessions`、`POST /api/v1/chat`、`POST /api/v1/chat_stream`（SSE），统一响应 `{code, info, data}`，鉴权头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`。
+
+## 测试
+
+```bash
+uv run pytest                                   # 单元 + 接口（fake model，不花钱）
+RUN_REAL_PROVIDER_TESTS=1 uv run pytest tests/integration   # 真实 DeepSeek（会产生费用）
+```
+
+## 修改指南
+
+| 想做的事 | 修改位置 |
+| --- | --- |
+| 改 prompt / 人设 | `agents/{{ spec.module_name }}/prompts.py` |
+| 加 / 改工具 | `agents/{{ spec.module_name }}/tools.py`（挂到 `agent.py` 的 `tools=[...]`） |
+| 新增 agent | `agents/` 下新建子目录（`agent.py` + `prompts.py` + `tools.py`），重启即自动注册 |
+| 改模型 | `app/providers/llm.py` + `.env` 的 `DEEPSEEK_*` |
+| 加端点 | `app/api/v1/` + `app/schemas/` |
+| 改编排 / 错误码映射 | `app/services/chat_service.py` |
+| 改错误码 / 响应格式 | `app/core/enums.py` + `response.py` + `handlers.py` |
+| 改鉴权 | `app/core/security.py` |
+| 改日志 | `app/core/logging.py` |
+| 新增配置项 | `app/core/config.py` + `.env.example` |
+
+核心约定：**一个 agent 的所有业务代码内聚在自己的目录**，框架层（app/）只提供横切能力——新增 agent 时不要动 app/ 下的代码。

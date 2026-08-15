@@ -1,0 +1,1 @@
+"""Demo FastAPI agent service."""

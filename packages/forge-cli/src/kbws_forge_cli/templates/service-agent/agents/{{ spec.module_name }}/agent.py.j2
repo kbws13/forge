@@ -1,0 +1,18 @@
+"""Agent definition.
+
+约定：agents/<agent_id>/agent.py 导出名为 ``agent`` 的对象，
+SDK 的 ``load_agents`` 会自动发现并注册。
+"""
+
+from kbws_forge_runtime.agent import Agent
+
+from .prompts import assistant_prompt
+from .tools import add, current_time
+
+agent = Agent(
+    agent_id="{{ spec.module_name }}",
+    name="{{ spec.name }}",
+    description="General-purpose chat agent with local tools.",
+    prompt=assistant_prompt,
+    tools=[current_time, add],
+)

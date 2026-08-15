@@ -1,0 +1,77 @@
+"""End-to-end tests against the real provider.
+
+Skipped unless ``RUN_REAL_PROVIDER_TESTS=1`` — these calls are billed.
+"""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.config import Settings
+from app.main import create_app
+
+pytestmark = pytest.mark.real_provider
+
+
+@pytest.fixture(scope="module")
+def real_client():
+    if os.environ.get("RUN_REAL_PROVIDER_TESTS") != "1":
+        pytest.skip("set RUN_REAL_PROVIDER_TESTS=1 to call the real provider")
+    settings = Settings.load(env_file=".env.test")
+    if not settings.deepseek_api_key or settings.deepseek_api_key.get_secret_value() == "sk-xxx":
+        pytest.skip("DEEPSEEK_API_KEY is not configured")
+    app = create_app(settings)
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_real_chat_memory_flow(real_client) -> None:
+    headers = {"X-API-Key": "test-secret-key"}
+    session = real_client.post(
+        "/api/v1/sessions",
+        json={"agent_id": "{{ spec.module_name }}", "user_id": "real-user"},
+        headers=headers,
+    ).json()["data"]
+
+    first = real_client.post(
+        "/api/v1/chat",
+        json={
+            "agent_id": "{{ spec.module_name }}",
+            "user_id": "real-user",
+            "message": "Remember the code KBWS_REAL_77. Reply with just OK.",
+            "session_id": session["session_id"],
+        },
+        headers=headers,
+    ).json()
+    assert first["code"] == 0
+
+    second = real_client.post(
+        "/api/v1/chat",
+        json={
+            "agent_id": "{{ spec.module_name }}",
+            "user_id": "real-user",
+            "message": "What code did I ask you to remember? Reply with only the code.",
+            "session_id": session["session_id"],
+        },
+        headers=headers,
+    ).json()
+    assert second["code"] == 0
+    assert "KBWS_REAL_77" in second["data"]["content"]
+
+
+def test_real_chat_tool_calling(real_client) -> None:
+    headers = {"X-API-Key": "test-secret-key"}
+    resp = real_client.post(
+        "/api/v1/chat",
+        json={
+            "agent_id": "{{ spec.module_name }}",
+            "user_id": "real-user",
+            "message": "What is 2 plus 3?",
+        },
+        headers=headers,
+    ).json()
+    assert resp["code"] == 0
+    assert "5" in resp["data"]["content"]

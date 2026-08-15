@@ -1,0 +1,69 @@
+"""App factory: config, logging, middleware, exception handlers, routers, lifespan."""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from kbws_forge_runtime import AgentRuntime
+from kbws_forge_runtime.agent import load_agents
+from kbws_forge_runtime.plugins import LoggingPlugin
+
+from app.api.v1 import agents, chat, health, sessions
+from app.core.config import Settings
+from app.core.constants import API_V1_PREFIX
+from app.core.handlers import register_exception_handlers
+from app.core.logging import setup_logging
+from app.middleware.request_id import RequestIDMiddleware
+from app.providers.llm import build_model
+
+logger = logging.getLogger("demo.main")
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or Settings.load()
+    setup_logging(settings.log_dir, settings.log_level)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 对应 InitRun：从 agents/ 目录自动发现并注册所有 agent
+        runtime = AgentRuntime(plugins=[LoggingPlugin()])
+        registered = await load_agents(
+            settings.agents_dir,
+            runtime,
+            model_factory=lambda: build_model(settings),
+        )
+        app.state.runtime = runtime
+        logger.info("runtime ready agents=%s", registered)
+        yield
+        logger.info("runtime shutdown")
+
+    app = FastAPI(
+        title="{{ spec.name }} Agent Service",
+        version="0.1.0",
+        docs_url="/docs" if settings.debug else None,
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+
+    # 中间件（后添加的先执行：request_id 最外层）
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    register_exception_handlers(app)
+
+    app.include_router(health.router, prefix=API_V1_PREFIX)
+    app.include_router(agents.router, prefix=API_V1_PREFIX)
+    app.include_router(sessions.router, prefix=API_V1_PREFIX)
+    app.include_router(chat.router, prefix=API_V1_PREFIX)
+    return app
+
+
+app = create_app()

@@ -61,8 +61,12 @@ class Generator:
             }:
                 continue
             rel = src.relative_to(self.template_root)
-            dest_name = rel.name[:-3] if rel.name.endswith(".j2") else rel.name
-            dest = target / rel.parent / dest_name
+            # 目录名/文件名都支持 .j2 后缀与模板变量（如 agents/{{ spec.module_name }}/）
+            dest_parts = []
+            for part in rel.parts:
+                name = part.removesuffix(".j2")
+                dest_parts.append(self.env.from_string(name).render(spec=self.spec))
+            dest = target.joinpath(*dest_parts)
             rendered = self.env.get_template(rel.as_posix()).render(spec=self.spec)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered, encoding="utf-8")
