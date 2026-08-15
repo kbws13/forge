@@ -1,23 +1,38 @@
 # Forge
 
-> AI Agent 脚手架：一个用 Python 构建编码代理（coding agent）的 monorepo。
+> 自研 Agent 框架：运行时 SDK + 脚手架 CLI。企业里快速搭建、按场景定制 Agent 服务。
+
+Forge 解决的是"从零搭一个 Agent 服务"的重复工作：架构分层、鉴权、日志、多环境配置、
+Prompt 组件化、agent 组织方式……这些能力被封装成开箱即用的脚手架，业务团队专注写
+自己的 agent 逻辑，而不是每次重造一套基础设施。
 
 ## 包含什么
 
-| 包 | PyPI | 说明 |
+| 包 | PyPI | 职责 |
 | --- | --- | --- |
-| [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 框架无关的 agent 运行时：AgentRuntime、组件化 Prompt、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流 |
-| [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | Vite 式交互脚手架：`forge init` 生成分层 FastAPI Agent 服务 |
+| [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 运行时 SDK：AgentRuntime、组件化 Prompt、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流 |
+| [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | 脚手架 CLI：`forge init` 交互式生成完整分层服务，后续按场景定制 |
 
 ## 快速开始
 
 ```bash
 pip install kbws-forge-cli
-forge init my-agent          # 交互式生成项目
+forge init my-agent          # 交互式生成项目（Vite 风格）
 cd my-agent
 uv sync                      # 自动安装 kbws-forge-runtime
 uv run uvicorn app.main:app --reload
 ```
+
+生成的即是可运行、可测试、可部署的服务骨架：业务聚合层（`agents/`）+ 技术分层
+（`app/`），内置全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试。
+
+## 设计理念
+
+- **脚手架优先**：框架的价值在于"生成即用、按需定制"——`forge init` 产出完整骨架，业务代码（agent/prompt/tools）在自己的目录里演进，不碰框架层
+- **代码化 Prompt**：prompt 是 Python 组件（`Message`/`Prompt`/`compose`），可组合、复用、单测，不用配置文件维护
+- **agent 目录约定**：一个 agent = 一个目录（`agent.py` + `prompts.py` + `tools.py`），`load_agents` 自动发现注册——加 agent 不加代码
+- **框架无关的运行时**：SDK 不绑定任何 Web 框架；HTTP 层由脚手架模板承载，换协议不换业务
+- **场景可定制**：模板、prompt 组件、工具/MCP/技能、插件钩子都是扩展点，按企业场景自由组合
 
 ## 仓库结构
 
@@ -30,13 +45,6 @@ forge/
 ├── uv.lock
 └── README.md
 ```
-
-## 设计要点
-
-- **uv workspace 管理**：两个包各自独立发布 PyPI，开发期 workspace 内互链（editable）
-- **SDK 框架无关**：`kbws-forge-runtime` 不绑定任何 Web 框架；FastAPI 层由 `forge-cli` 生成的模板承载
-- **代码化 Prompt**：prompt 是 Python 组件（组合/复用/单测），不用配置文件
-- **agent 目录约定**：一个 agent = 一个目录（agent.py + prompts.py + tools.py），自动发现注册
 
 ## 开发
 
