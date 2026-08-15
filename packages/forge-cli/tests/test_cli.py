@@ -10,33 +10,45 @@ def _invoke_in(tmp_path, monkeypatch, *args):
     return runner.invoke(app, list(args))
 
 
-def test_init_creates_hello_world_project(tmp_path, monkeypatch) -> None:
+def test_init_default_template_is_service_agent(tmp_path, monkeypatch) -> None:
+    """默认模板应生成完整分层服务（service-agent）。"""
     result = _invoke_in(tmp_path, monkeypatch, "init", "my-agent")
+    assert result.exit_code == 0, result.output
+    assert "service-agent" in result.output
+
+    proj = tmp_path / "my-agent"
+    assert (proj / "pyproject.toml").is_file()
+    assert (proj / "app" / "main.py").is_file()
+    assert (proj / "app" / "core").is_dir()
+    assert (proj / "agents").is_dir()
+    assert (proj / ".env.example").is_file()
+
+    pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'name = "my-agent"' in pyproject
+    assert "kbws-forge-runtime" in pyproject
+
+
+def test_init_base_agent_template_creates_hello_world(tmp_path, monkeypatch) -> None:
+    """显式 -t base-agent 仍生成最小 FastAPI HelloWorld。"""
+    result = _invoke_in(tmp_path, monkeypatch, "init", "my-agent", "-t", "base-agent")
     assert result.exit_code == 0, result.output
 
     proj = tmp_path / "my-agent"
-    assert proj.is_dir()
-    assert (proj / "pyproject.toml").is_file()
     assert (proj / "main.py").is_file()
-    assert (proj / ".gitignore").is_file()
+    main = (proj / "main.py").read_text(encoding="utf-8")
+    assert "FastAPI" in main
+    assert "Hello World" in main
 
     pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "my-agent"' in pyproject
     assert "fastapi" in pyproject
 
-    main = (proj / "main.py").read_text(encoding="utf-8")
-    assert "FastAPI" in main
-    assert "Hello World" in main
-
-    readme = (proj / "README.md").read_text(encoding="utf-8")
-    assert "uv run fastapi dev" in readme
-
 
 def test_init_renders_name_into_template(tmp_path, monkeypatch) -> None:
     result = _invoke_in(tmp_path, monkeypatch, "init", "my-agent")
     assert result.exit_code == 0, result.output
-    main = (tmp_path / "my-agent" / "main.py").read_text(encoding="utf-8")
-    assert 'title="my-agent"' in main
+    main = (tmp_path / "my-agent" / "app" / "main.py").read_text(encoding="utf-8")
+    assert 'title="my-agent Agent Service"' in main
 
 
 def test_init_rejects_invalid_name(tmp_path, monkeypatch) -> None:
@@ -66,4 +78,4 @@ def test_init_force_overwrites(tmp_path, monkeypatch) -> None:
     (existing / "old.txt").write_text("x", encoding="utf-8")
     result = _invoke_in(tmp_path, monkeypatch, "init", "my-agent", "--force")
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "my-agent" / "main.py").is_file()
+    assert (tmp_path / "my-agent" / "app" / "main.py").is_file()

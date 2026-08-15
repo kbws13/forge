@@ -35,10 +35,10 @@ def main(
 def init_command(
     name: str = typer.Argument(..., help="Name of the agent project, e.g. my-agent."),
     template: str = typer.Option(
-        "base-agent",
+        "service-agent",
         "--template",
         "-t",
-        help="Template to use (base-agent | service-agent | cloudtest-agent).",
+        help="Template to use (service-agent | base-agent | cloudtest-agent).",
     ),
     force: bool = typer.Option(
         False, "--force", help="Overwrite the target directory if it already exists."

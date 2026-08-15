@@ -11,12 +11,14 @@ pip install kbws-forge-cli
 ## 用法
 
 ```bash
-forge init my-agent                # 默认模板：base-agent（FastAPI HelloWorld）
-forge init my-service -t service-agent   # service-agent：完整分层服务
-cd my-service
+forge init my-agent                # 默认模板：service-agent（完整分层服务）
+forge init my-hello -t base-agent  # 可选：最小 FastAPI HelloWorld
+cd my-agent
 uv sync
 uv run uvicorn app.main:app --reload
 ```
+
+> `--template/-t` 保留用于以后多模板选择（届时也会支持交互式选择）；当前默认即 `service-agent`。
 
 ## 模板
 
