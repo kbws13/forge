@@ -80,6 +80,18 @@ def test_extension_subpackages_expose_their_own_contract() -> None:
     assert Plugin
 
 
+def test_prompts_and_agent_subpackages_expose_their_contract() -> None:
+    from kbws_forge_runtime.agent import Agent, load_agents
+    from kbws_forge_runtime.prompts import Message, Prompt, compose, render_instruction
+
+    assert Agent
+    assert load_agents
+    assert Message
+    assert Prompt
+    assert compose
+    assert render_instruction
+
+
 def test_runtime_keeps_registry_and_sessions_private() -> None:
     runtime = forge.AgentRuntime(plugins=[])
     assert not hasattr(runtime, "registry")

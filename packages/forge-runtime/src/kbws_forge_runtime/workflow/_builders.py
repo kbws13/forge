@@ -4,12 +4,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage
+from langchain_core.prompts import BaseChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from kbws_forge_runtime.prompts import Prompt, render_instruction
 from kbws_forge_runtime.workflow.state import WorkflowState
 
 
@@ -74,7 +76,8 @@ def build_sequence(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
     # noinspection PyTypeChecker
     builder = StateGraph(WorkflowState)
     for step in steps:
-        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
+        # langgraph 1.x StateNode 存根对双参数节点误报，运行时注入 config 正常
+        builder.add_node(step.name, cast(Any, _step_node(step)))
     builder.add_edge(START, steps[0].name)
     for current, following in zip(steps, steps[1:], strict=False):
         builder.add_edge(current.name, following.name)
@@ -94,7 +97,8 @@ def build_parallel(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
 
     builder.add_node("join", join)
     for step in steps:
-        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
+        # langgraph 1.x StateNode 存根对双参数节点误报，运行时注入 config 正常
+        builder.add_node(step.name, cast(Any, _step_node(step)))
         builder.add_edge(START, step.name)
         builder.add_edge(step.name, "join")
     builder.add_edge("join", END)
@@ -113,7 +117,8 @@ def build_loop(
         raise ValueError("max_rounds must be positive")
     builder = StateGraph(WorkflowState)
     for step in steps:
-        builder.add_node(step.name, cast(Any, _step_node(step)))  # langgraph 1.x StateNode 存根对双参数节点误报
+        # langgraph 1.x StateNode 存根对双参数节点误报，运行时注入 config 正常
+        builder.add_node(step.name, cast(Any, _step_node(step)))
 
     async def round_end(state: WorkflowState) -> dict[str, Any]:
         return {"round": state.get("round", 0) + 1}
@@ -137,23 +142,31 @@ def build_loop(
 def build_chat_graph(
     model: Any,
     *,
-    instruction: str,
+    instruction: str | Prompt | BaseChatPromptTemplate,
     tools: Sequence[Any] = (),
     checkpointer: Any = None,
 ) -> Any:
-    """Build one chat agent graph, including a local tool loop when needed."""
+    """Build one chat agent graph, including a local tool loop when needed.
+
+    ``instruction`` accepts a plain string (system message), a composable
+    ``Prompt`` (code-first blocks with history/variable injection), or any
+    langchain chat prompt template for full flexibility.
+    """
     builder = StateGraph(WorkflowState)
     chat_model = model.bind_tools(list(tools)) if tools else model
 
-    async def chat_node(state: WorkflowState) -> dict[str, Any]:
-        current_instruction = instruction
-        for key, value in state.get("outputs", {}).items():
-            current_instruction = current_instruction.replace(f"{{{key}}}", value)
-        prompt = [SystemMessage(content=current_instruction), *state.get("messages", [])]
+    async def chat_node(state: WorkflowState, config: RunnableConfig) -> dict[str, Any]:
+        call_variables = config.get("configurable", {}).get("variables") or {}
+        prompt = render_instruction(
+            instruction,
+            history=list(state.get("messages", [])),
+            outputs=state.get("outputs", {}),
+            variables=call_variables,
+        )
         response = await chat_model.ainvoke(prompt)
         return {"messages": [response]}
 
-    builder.add_node("chat", chat_node)
+    builder.add_node("chat", cast(Any, chat_node))
     builder.add_edge(START, "chat")
     if tools:
         builder.add_node("tools", ToolNode(list(tools)))

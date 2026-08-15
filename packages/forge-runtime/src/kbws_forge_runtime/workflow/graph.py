@@ -19,7 +19,7 @@ class ChatGraph(Protocol):
         config: dict[str, Any] | None = None,
         *,
         version: str,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Stream graph events; an async generator in practice."""
         if False:  # pragma: no cover - 协议存根，仅用于声明 yield 类型
             yield {}

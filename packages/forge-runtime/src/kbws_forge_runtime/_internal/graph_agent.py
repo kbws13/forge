@@ -79,10 +79,18 @@ class GraphAgent:
     graph: ChatGraph
 
     async def stream(
-        self, message: ChatMessage, *, run_id: str, session_id: str
+        self,
+        message: ChatMessage,
+        *,
+        run_id: str,
+        session_id: str,
+        variables: dict[str, Any] | None = None,
     ) -> AsyncIterator[TextDelta | ToolStarted | ToolFinished | MessageCreated]:
         config = {
-            "configurable": {"thread_id": session_id},
+            "configurable": {
+                "thread_id": session_id,
+                "variables": variables or {},
+            },
             "metadata": {
                 "run_id": run_id,
                 "agent_id": self.info.agent_id,

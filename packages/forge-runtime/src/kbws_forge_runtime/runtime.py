@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from typing import Any
 from uuid import uuid4
 
 from kbws_forge_runtime._internal.agent_handle import AgentHandle
@@ -20,7 +21,6 @@ from kbws_forge_runtime.models import (
     RunFinished,
     RunStarted,
     UserSession,
-    agents,
 )
 from kbws_forge_runtime.plugins import Plugin
 from kbws_forge_runtime.workflow.graph import ChatGraph
@@ -56,8 +56,11 @@ class AgentRuntime:
         user_id: str,
         messages: str | ChatMessage,
         session_id: str | None = None,
+        variables: dict[str, Any] | None = None,
     ) -> ChatResult:
-        async for event in self.chat_stream(agent_id, user_id, messages, session_id):
+        async for event in self.chat_stream(
+            agent_id, user_id, messages, session_id, variables=variables
+        ):
             if isinstance(event, RunFailed):
                 raise RunError(event.error_message, code=event.error_code)
             if isinstance(event, RunFinished):
@@ -71,10 +74,15 @@ class AgentRuntime:
         raise RunError("chat stream finished without a result")
 
     async def chat_parts(
-        self, agent_id: str, user_id: str, parts: Sequence[ChatPart], session_id: str | None = None
+        self,
+        agent_id: str,
+        user_id: str,
+        parts: Sequence[ChatPart],
+        session_id: str | None = None,
+        variables: dict[str, Any] | None = None,
     ):
         message = ChatMessage(role="user", parts=tuple(parts))
-        return await self.chat(agent_id, user_id, message, session_id)
+        return await self.chat(agent_id, user_id, message, session_id, variables=variables)
 
     async def chat_stream(
         self,
@@ -82,6 +90,7 @@ class AgentRuntime:
         user_id: str,
         message: str | ChatMessage,
         session_id: str | None = None,
+        variables: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         request_message = ChatMessage.user(message) if isinstance(message, str) else message
         request = ChatRequest(
@@ -129,6 +138,7 @@ class AgentRuntime:
                 request_message,
                 run_id=run_id,
                 session_id=session.session_id,
+                variables=variables,
             ):
                 if isinstance(event, MessageCreated) and event.message.role == "assistant":
                     final_message = event.message

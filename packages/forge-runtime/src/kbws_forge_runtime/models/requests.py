@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from kbws_forge_runtime.models.messages import ChatMessage
@@ -12,6 +14,7 @@ class ChatRequest(BaseModel):
     user_id: str = Field(min_length=1)
     message: ChatMessage
     session_id: str | None = None
+    variables: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def required_user_message(self) -> ChatRequest:
