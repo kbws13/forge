@@ -16,12 +16,18 @@ API_KEY = "test-secret-key"
 
 os.environ["APP_ENV"] = "test"
 # app/main.py 模块级 create_app 会在 import 时构造 Settings，
-# 注入假 key 保证 import 成功（测试不依赖任何 .env 文件）
-os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
+# 临时注入假 key 保证 import 成功；import 后立即清理，
+# 避免污染 integration 测试对真实 key 的读取（环境变量优先于 .env 文件）
+_HAD_DEEPSEEK_KEY = "DEEPSEEK_API_KEY" in os.environ
+if not _HAD_DEEPSEEK_KEY:
+    os.environ["DEEPSEEK_API_KEY"] = "test-key"
 os.environ.setdefault("API_KEY", API_KEY)
 
 from app.core.config import Settings
 from app.main import create_app
+
+if not _HAD_DEEPSEEK_KEY:
+    del os.environ["DEEPSEEK_API_KEY"]
 
 
 class BindableFakeChatModel(FakeListChatModel):
