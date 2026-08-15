@@ -20,7 +20,9 @@ app = typer.Typer(
 
 
 @app.callback()
-def main(version: bool = typer.Option(False, "--version", help="Show version and exit.")) -> None:
+def main(
+    version: bool = typer.Option(False, "--version", help="Show version and exit."),
+) -> None:
     """Forge CLI - coding agent scaffolding generator."""
     if version:
         from kbws_forge_cli import __version__
