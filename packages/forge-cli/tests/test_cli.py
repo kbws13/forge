@@ -31,9 +31,11 @@ def test_init_default_template_is_service_agent(tmp_path, monkeypatch) -> None:
     assert (proj / "agents").is_dir()
     assert (proj / ".env.example").is_file()
 
+    from kbws_forge_cli.generator import RUNTIME_MIN_VERSION
+
     pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "my-agent"' in pyproject
-    assert "kbws-forge-runtime" in pyproject
+    assert f"kbws-forge-runtime[openai]>={RUNTIME_MIN_VERSION}" in pyproject
     assert "forge trace" in (proj / "README.md").read_text(encoding="utf-8")
 
 
@@ -154,3 +156,28 @@ def test_trace_command_rejects_invalid_api_url() -> None:
 
     assert result.exit_code == 1
     assert "absolute http:// or https:// URL" in result.output
+
+
+def test_runtime_min_version_tracks_local_runtime() -> None:
+    """CLI 声明的 runtime 最低版本必须 <= 工作区 runtime 的实际版本（防忘记同步）。"""
+    import re
+    from pathlib import Path
+
+    from kbws_forge_cli.generator import RUNTIME_MIN_VERSION
+
+    runtime_pyproject = (
+        Path(__file__).resolve().parents[2] / "forge-runtime" / "pyproject.toml"
+    )
+    match = re.search(
+        r'^version = "([^"]+)"', runtime_pyproject.read_text(encoding="utf-8"), re.MULTILINE
+    )
+    assert match, "forge-runtime pyproject missing version"
+    local_version = match.group(1)
+    assert _version_tuple(RUNTIME_MIN_VERSION) <= _version_tuple(local_version), (
+        f"RUNTIME_MIN_VERSION {RUNTIME_MIN_VERSION} exceeds local runtime {local_version}; "
+        "bump RUNTIME_MIN_VERSION only after the runtime release"
+    )
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))

@@ -10,6 +10,10 @@ from pydantic import BaseModel, field_validator
 
 TEMPLATES_ROOT = Path(__file__).resolve().parent / "templates"
 
+# 模板依赖的 runtime 最低版本：随 CLI 发版同步提升（lockstep 策略）。
+# 模板代码可能用到新 SDK API，必须确保生成的项目能装到满足要求的 runtime。
+RUNTIME_MIN_VERSION = "1.2.0"
+
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 
 
@@ -34,6 +38,11 @@ class ProjectSpec(BaseModel):
     def module_name(self) -> str:
         """Python-friendly name (hyphens become underscores)."""
         return self.name.replace("-", "_")
+
+    @property
+    def runtime_min_version(self) -> str:
+        """The minimum kbws-forge-runtime version generated projects must install."""
+        return RUNTIME_MIN_VERSION
 
 
 class Generator:
