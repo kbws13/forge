@@ -15,10 +15,14 @@ from kbws_forge_runtime.evals.models import EvalSuite
 
 
 def load_eval_suites(evals_dir: str | Path) -> list[EvalSuite]:
-    """Scan ``evals_dir`` and return every discovered suite."""
+    """Scan ``evals_dir`` and return every discovered suite.
+
+    目录不存在时返回空列表（而非抛异常）——生产环境可以不部署 ``evals/``，
+    评估是可选能力，绝不能成为启动硬依赖。
+    """
     root = Path(evals_dir).expanduser().resolve()
     if not root.is_dir():
-        raise ValueError(f"evals directory does not exist: {root}")
+        return []
     if str(root.parent) not in sys.path:
         sys.path.insert(0, str(root.parent))
 

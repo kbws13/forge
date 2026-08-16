@@ -11,6 +11,7 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 
+from kbws_forge_cli.eval_commands import eval_app
 from kbws_forge_cli.generator import Generator, ProjectSpec
 from kbws_forge_cli.trace_server import (
     DEFAULT_API_URL,
@@ -75,6 +76,7 @@ app = typer.Typer(
     add_completion=False,
     invoke_without_command=True,
 )
+app.add_typer(eval_app, name="eval")
 
 
 @app.callback()

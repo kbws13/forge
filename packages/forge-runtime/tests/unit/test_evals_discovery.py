@@ -82,9 +82,9 @@ def test_rejects_duplicate_ids(tmp_path: Path) -> None:
         load_eval_suites(evals_dir)
 
 
-def test_missing_directory_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="does not exist"):
-        load_eval_suites(tmp_path / "nope")
+def test_missing_directory_returns_empty(tmp_path: Path) -> None:
+    # 生产环境可以不部署 evals/，缺失目录 = 无套件，不阻断启动
+    assert load_eval_suites(tmp_path / "nope") == []
 
 
 @pytest.mark.asyncio

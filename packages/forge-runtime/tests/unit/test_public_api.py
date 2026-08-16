@@ -24,6 +24,7 @@ from kbws_forge_runtime.workflow import (
 
 def test_root_exports_only_runtime_contract() -> None:
     assert set(forge.__all__) == {
+        "BUILTIN_GRADERS",
         "AgentInfo",
         "AgentNotFoundError",
         "AgentRuntime",
@@ -80,7 +81,10 @@ def test_root_exports_only_runtime_contract() -> None:
         "ToolStarted",
         "UsageResolver",
         "UserSession",
+        "case_to_row",
         "contains",
+        "export_suite",
+        "load_cases",
         "exact",
         "json_schema",
         "llm_judge",

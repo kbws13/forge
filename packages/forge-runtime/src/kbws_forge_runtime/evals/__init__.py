@@ -1,5 +1,11 @@
 """Code-first evaluation engine: cases, suites, graders, runner, store."""
 
+from kbws_forge_runtime.evals.dataset import (
+    BUILTIN_GRADERS,
+    case_to_row,
+    export_suite,
+    load_cases,
+)
 from kbws_forge_runtime.evals.discovery import load_eval_suites
 from kbws_forge_runtime.evals.graders import (
     contains,
@@ -23,6 +29,7 @@ from kbws_forge_runtime.evals.runner import EvalRunner
 from kbws_forge_runtime.evals.store import EvalStore
 
 __all__ = [
+    "BUILTIN_GRADERS",
     "EvalCase",
     "EvalCaseResult",
     "EvalRun",
@@ -33,10 +40,13 @@ __all__ = [
     "Grader",
     "GraderCaseResult",
     "GraderResult",
+    "case_to_row",
     "contains",
     "exact",
+    "export_suite",
     "json_schema",
     "llm_judge",
+    "load_cases",
     "load_eval_suites",
     "regex",
     "tool_trajectory",

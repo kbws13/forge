@@ -41,6 +41,16 @@ forge trace --api-url http://127.0.0.1:8000/api/v1
 - **全量 trace**：任何客户端（curl / Yaak / 脚本）发起的 run 都会被服务端记录到
   `logs/traces.json`（重启不丢），面板自动连接 + 定时刷新即可看到，无需手动操作
 
+### 评估与 CI 门禁
+
+```bash
+forge eval run smoke --fail-under 0.9 --report junit -o out/   # 跑评估 + 门禁 + JUnit 报告
+forge eval run smoke --mode replay                             # 重打分已记录 run（零外部调用）
+forge eval compare --baseline <eval_run_id> --live             # 基线 vs 候选，输出回归清单
+forge eval dataset export smoke -o cases.jsonl                 # 数据集导出
+forge eval dataset import cases.jsonl --name golden --agent <agent_id>
+```
+
 ```bash
 # 查看 trace 查询 API
 curl -H "X-API-Key: <key>" http://127.0.0.1:8000/api/v1/traces

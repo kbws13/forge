@@ -1,6 +1,7 @@
 
-from kbws_forge_cli.cli import app
 from typer.testing import CliRunner
+
+from kbws_forge_cli.cli import app
 
 runner = CliRunner()
 

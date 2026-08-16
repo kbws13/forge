@@ -54,6 +54,7 @@ def _ensure_playwright() -> None:
         capture_output=True,
         text=True,
         timeout=300,
+        check=False,
     )
     if result.returncode != 0:
         pytest.skip(
@@ -88,6 +89,7 @@ def test_trace_ui_browser_flow() -> None:
             capture_output=True,
             text=True,
             timeout=600,
+            check=False,
         )
         if result.returncode != 0:
             sys.stdout.write(result.stdout)

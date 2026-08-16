@@ -70,6 +70,16 @@ class EvalStore:
                     )
         return matches
 
+    def case_run_ids(self, suite_id: str, case_id: str) -> tuple[str, ...]:
+        """Newest recorded run ids for one case of a suite (replay input)."""
+        for run in reversed(self._runs.values()):
+            if run.suite_id != suite_id:
+                continue
+            for case in run.cases:
+                if case.case_id == case_id and case.run_ids:
+                    return case.run_ids
+        return ()
+
     def delete_run(self, eval_run_id: str) -> bool:
         if eval_run_id not in self._runs:
             return False

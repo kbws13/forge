@@ -222,10 +222,89 @@ async def test_runner_case_filter(runner: EvalRunner) -> None:
 @pytest.mark.asyncio
 async def test_runner_modes(runner: EvalRunner) -> None:
     suite = make_suite((EvalCase(id="a", input="x", graders=(exact(),)),))
-    with pytest.raises(NotImplementedError):
-        await runner.run(suite, mode="replay")
     with pytest.raises(ValueError):
         await runner.run(suite, mode="bogus")
+    # replay 已实现：无记录时 case 为 NOT_EVALUATED
+    replay = await runner.run(suite, mode="replay")
+    assert replay.status == "finished"
+    assert replay.cases[0].status == EvalStatus.NOT_EVALUATED
+    assert "no recorded run to replay" in replay.cases[0].failure_reasons
+    assert replay.provenance["mode"] == "replay"
+
+
+@pytest.mark.asyncio
+async def test_runner_replay_regrades_recorded_runs(tmp_path) -> None:
+    """先 live 记录 → 再 replay：结果一致（确定性），且不触发新调用。"""
+
+    def recorded(content: str, *, tool: bool = False):
+        events = []
+        if tool:
+            events.append({"type": "tool_started", "tool_name": "add"})
+        events.append(
+            {
+                "type": "run_finished",
+                "message": {
+                    "role": "assistant",
+                    "parts": [{"type": "text", "text": content}],
+                },
+                "parsed": None,
+                "duration_ms": 100.0,
+                "model_calls": 1,
+                "tool_calls": 1 if tool else 0,
+                "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            }
+        )
+        return (content, events)
+
+    runtime = FakeRuntime([recorded("2", tool=True), recorded("2", tool=True), recorded("2")])
+    store = EvalStore(persist_dir=tmp_path / "evals")
+    runner = EvalRunner(runtime, store=store)
+    suite = make_suite(
+        (
+            EvalCase(id="math", input="1+1?", expected="2", graders=(exact(),)),
+            EvalCase(id="tool", input="now?", expected=["add"], graders=(tool_trajectory(),)),
+            EvalCase(id="word", input="say hi", expected="hi", graders=(contains(),)),
+        )
+    )
+    live = await runner.run(suite)
+    assert live.totals["passed"] == 2
+    assert live.totals["failed"] == 1
+    calls_after_live = runtime._index  # noqa: SLF001
+
+    replay = await runner.run(suite, mode="replay")
+    assert replay.status == "finished"
+    assert replay.totals == live.totals
+    assert runtime._index == calls_after_live  # replay 零外部调用
+    for live_case, replay_case in zip(live.cases, replay.cases, strict=True):
+        assert replay_case.status == live_case.status
+        assert replay_case.run_ids == live_case.run_ids
+
+
+@pytest.mark.asyncio
+async def test_runner_replay_unknown_suite_not_evaluated(runner: EvalRunner) -> None:
+    suite = make_suite((EvalCase(id="never_run", input="x", graders=(exact(),)),))
+    replay = await runner.run(suite, mode="replay")
+    assert replay.cases[0].status == EvalStatus.NOT_EVALUATED
+    assert "no recorded run to replay" in replay.cases[0].failure_reasons
+
+
+@pytest.mark.asyncio
+async def test_runner_repetitions_override(runner: EvalRunner) -> None:
+    suite = make_suite((EvalCase(id="m", input="1+1?", expected="2", graders=(exact(),)),))
+    eval_run = await runner.run(suite, repetitions=3)
+    assert eval_run.repetitions == 3
+    assert len(eval_run.cases[0].run_ids) == 3
+    assert eval_run.provenance["repetitions"] == 1  # suite 默认
+
+
+@pytest.mark.asyncio
+async def test_runner_provenance_fingerprint(runner: EvalRunner) -> None:
+    suite = make_suite((EvalCase(id="a", input="x", expected="2", graders=(exact(),)),))
+    eval_run = await runner.run(suite)
+    fp = eval_run.provenance["suite_fingerprint"]
+    assert isinstance(fp, str) and len(fp) == 16
+    again = await runner.run(suite)
+    assert again.provenance["suite_fingerprint"] == fp  # 确定性
 
 
 @pytest.mark.asyncio

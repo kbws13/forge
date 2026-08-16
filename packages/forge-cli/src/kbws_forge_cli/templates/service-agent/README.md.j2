@@ -95,6 +95,18 @@ curl http://127.0.0.1:8000/api/v1/traces/<run_id>/eval         # 某次运行对
 
 确定性 grader（`exact / contains / regex / json_schema / tool_trajectory`）开箱即用；`llm_judge(model_factory, rubric)` 可选。结果持久化到 `logs/evals/`，与 `run_id` 关联——Trace 面板可直接看到每条 run 的得分与失败原因。
 
+### CLI 与 CI 门禁
+
+```bash
+forge eval run smoke --fail-under 0.9 --report junit -o out/     # 跑套件 + 门禁 + JUnit 报告
+forge eval run smoke --mode replay                               # 重打分已记录的 run（零外部调用）
+forge eval compare --baseline <eval_run_id> --live               # 基线 vs 本次改动，输出回归清单
+forge eval dataset export smoke -o cases.jsonl                   # 数据集导出（JSONL）
+forge eval dataset import cases.jsonl --name golden --agent {{ spec.module_name }}   # 导入生成 evals/golden.py
+```
+
+`--fail-under` 不达标时退出码非 0，可直接接入 CI；JUnit 报告兼容主流 CI 解析。
+
 ## 测试
 
 ```bash
@@ -120,3 +132,8 @@ RUN_REAL_PROVIDER_TESTS=1 uv run pytest tests/integration   # 真实 DeepSeek（
 | 新增配置项 | `app/core/config.py` + `.env.example` |
 
 核心约定：**一个 agent 的所有业务代码内聚在自己的目录**，框架层（app/）只提供横切能力——新增 agent 时不要动 app/ 下的代码。
+
+## 常见问题
+
+- **评估会不会影响线上业务调用？** 不会。启动时的"自动发现"只是把 `evals/` 下的套件定义注册到内存（不执行、不挂中间件、不拦截请求）；业务链路（`/chat`、`/chat_stream`）完全不经过评估代码。评估只在显式触发时运行（`POST /api/v1/evals/{suite_id}/run` 需 API Key，或 `forge eval run`），并使用独立的 `eval_user` 与新建会话，不触碰业务会话。业务调用即使与断言对不上也不会有任何报错——评估是观测/测试层，不是执行路径的一部分。
+- **生产环境不想要评估？** 不部署 `evals/` 目录即可（缺失目录 = 无套件，服务正常启动）；评估结果写入 `logs/evals/`，可随时清空或整体移除。

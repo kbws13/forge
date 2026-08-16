@@ -67,6 +67,27 @@ outside the UI appear automatically (the list auto-refreshes every few
 seconds). The runtime persists runs to `logs/traces.json` (bounded,
 newest-first), so they survive restarts.
 
+### Evaluating agents (CLI)
+
+`forge eval` drives the service's eval API and produces CI-ready output:
+
+```bash
+forge eval run <suite> [--mode live|replay] [--cases a,b] [--repetitions N]
+                      [--fail-under 0.9] [--report json junit] [-o out/]
+forge eval compare --baseline <eval_run_id> [--candidate <id> | --live]
+forge eval dataset export <suite> -o cases.jsonl
+forge eval dataset import cases.jsonl --name golden --agent test_agent
+```
+
+- `run` executes a suite on the service (live calls the model, replay re-grades
+  recorded runs with zero external calls), prints a per-case score table, writes
+  JSON/JUnit4 reports, and `--fail-under` gates the exit code for CI.
+- `compare` diffs two eval runs per case (regressions list, score deltas) and
+  exits 1 when a case regressed or the candidate falls below `--fail-under`.
+- `dataset` exports a suite's cases to JSONL (graders as names) and imports a
+  JSONL file back into a code-first `evals/` module.
+- `--api-key` also reads the `FORGE_API_KEY` env var.
+
 ### Browser e2e (opt-in)
 
 The Trace UI has a Playwright regression suite (`e2e/`) that runs the full

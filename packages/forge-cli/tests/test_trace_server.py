@@ -5,6 +5,7 @@ from http.client import HTTPConnection
 from threading import Thread
 
 import pytest
+
 from kbws_forge_cli.trace_server import (
     TRACE_HOST,
     create_trace_server,

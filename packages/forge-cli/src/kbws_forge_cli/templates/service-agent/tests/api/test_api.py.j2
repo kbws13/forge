@@ -226,15 +226,37 @@ def test_eval_run_history_and_detail(client, auth_headers) -> None:
     assert detail.json()["data"]["cases"][0]["case_id"] == "greet"
 
 
-def test_eval_unknown_suite_and_replay_mode_rejected(client, auth_headers) -> None:
+def test_eval_unknown_suite_rejected(client, auth_headers) -> None:
     resp = client.post("/api/v1/evals/nope/run", headers=auth_headers)
     assert resp.status_code == 404
     assert resp.json()["code"] == 40400
 
-    resp = client.post(
+
+def test_eval_replay_matches_live_results(client, auth_headers) -> None:
+    live = client.post("/api/v1/evals/api_test/run", headers=auth_headers).json()["data"]
+    assert live["totals"]["passed"] == 1
+
+    replay = client.post(
         "/api/v1/evals/api_test/run",
         json={"mode": "replay"},
         headers=auth_headers,
+    ).json()["data"]
+    assert replay["totals"] == live["totals"]
+    for lc, rc in zip(live["cases"], replay["cases"], strict=True):
+        assert rc["run_ids"] == lc["run_ids"]
+
+
+def test_eval_suite_detail_and_repetitions(client, auth_headers) -> None:
+    detail = client.get("/api/v1/evals/api_test", headers=auth_headers)
+    assert detail.status_code == 200
+    suite = detail.json()["data"]
+    assert [case["id"] for case in suite["cases"]] == ["greet", "missing"]
+    assert suite["cases"][0]["graders"] == ["exact"]
+
+    resp = client.post(
+        "/api/v1/evals/api_test/run",
+        json={"repetitions": 2},
+        headers=auth_headers,
     )
-    assert resp.status_code == 400
-    assert "Phase 4a" in resp.json()["info"]
+    assert resp.json()["data"]["repetitions"] == 2
+    assert len(resp.json()["data"]["cases"][0]["run_ids"]) == 2

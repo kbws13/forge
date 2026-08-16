@@ -2,13 +2,15 @@
 
 Live mode calls the agent for every case (bounded by the suite's RunPolicy:
 per-run timeout/budget come from ``RunPolicy`` itself, cross-case concurrency
-from ``RunPolicy.max_concurrency``). Replay mode lands in Phase 4a and is
+from ``RunPolicy.max_concurrency``). Replay mode re-grades recorded runs.
 signalled explicitly rather than half-implemented.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -26,7 +28,8 @@ from kbws_forge_runtime.evals.models import (
     worst_status,
 )
 from kbws_forge_runtime.evals.store import EvalStore
-from kbws_forge_runtime.models import ChatResult
+from kbws_forge_runtime.execution import ModelUsage
+from kbws_forge_runtime.models import ChatMessage, ChatResult
 from kbws_forge_runtime.runtime import AgentRuntime
 
 Mode = Literal["live", "replay"]
@@ -51,6 +54,47 @@ def _git_sha() -> str | None:
     return result.stdout.strip() or None
 
 
+def _suite_fingerprint(suite) -> str:
+    """Deterministic fingerprint of the suite definition (provenance)."""
+    payload = {
+        "suite_id": suite.id,
+        "agent_id": suite.agent_id,
+        "cases": [
+            {"id": case.id, "expected": case.expected, "tags": list(case.tags)}
+            for case in suite.cases
+        ],
+        "graders": [grader.key for grader in suite.graders],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+
+
+def _chat_result_from_events(
+    run_id: str, events: Sequence[dict[str, Any]]
+) -> ChatResult | None:
+    """Reconstruct a ChatResult from a recorded run's terminal event (replay)."""
+    finished = next(
+        (event for event in events if event.get("type") == "run_finished"), None
+    )
+    if finished is None:
+        return None
+    message = finished.get("message")
+    usage = finished.get("usage") or {}
+    return ChatResult(
+        run_id=run_id,
+        agent_id=finished.get("agent_id", ""),
+        user_id="",
+        session_id=finished.get("session_id", ""),
+        message=ChatMessage(**message) if message else ChatMessage.assistant(""),
+        parsed=finished.get("parsed"),
+        duration_ms=finished.get("duration_ms"),
+        model_calls=finished.get("model_calls", 0),
+        tool_calls=finished.get("tool_calls", 0),
+        usage=ModelUsage(**usage),
+    )
+
+
 class EvalRunner:
     """Executes :class:`EvalSuite` cases against an :class:`AgentRuntime`."""
 
@@ -69,18 +113,25 @@ class EvalRunner:
         mode: Mode = "live",
         provenance: dict[str, Any] | None = None,
         case_ids: Sequence[str] | None = None,
+        repetitions: int | None = None,
     ) -> EvalRun:
-        """Execute a suite and persist the resulting :class:`EvalRun`."""
+        """Execute a suite and persist the resulting :class:`EvalRun`.
+
+        ``mode="live"`` calls the agent for every case; ``mode="replay"``
+        re-grades previously recorded runs (zero external calls) using the
+        run-id mapping in the EvalStore.
+        """
         if mode == "replay":
-            raise NotImplementedError("replay mode lands in Phase 4a")
+            return await self._run_replay(suite, provenance, case_ids, repetitions)
         if mode != "live":
             raise ValueError(f"unknown eval mode: {mode!r}")
 
+        effective_reps = repetitions if repetitions is not None else suite.repetitions
         eval_run = EvalRun(
             suite_id=suite.id,
             agent_id=suite.agent_id,
-            repetitions=suite.repetitions,
-            provenance=self._provenance(suite, provenance),
+            repetitions=effective_reps,
+            provenance=self._provenance(suite, provenance, mode="live"),
         )
 
         cases = [
@@ -91,7 +142,7 @@ class EvalRunner:
             semaphore = asyncio.Semaphore(suite.policy.max_concurrency)
 
         results = await asyncio.gather(
-            *(self._run_case(suite, case, semaphore) for case in cases),
+            *(self._run_case(suite, case, semaphore, effective_reps) for case in cases),
             return_exceptions=True,
         )
         case_results: list[EvalCaseResult] = []
@@ -116,20 +167,24 @@ class EvalRunner:
             status="finished",
             started_at=eval_run.started_at,
             completed_at=_iso(),
-            repetitions=suite.repetitions,
+            repetitions=effective_reps,
             provenance=eval_run.provenance,
             cases=tuple(case_results),
         )
         await self._store.save(eval_run)
         return eval_run
 
-    def _provenance(self, suite, extras: dict[str, Any] | None) -> dict[str, Any]:
+    def _provenance(
+        self, suite, extras: dict[str, Any] | None, *, mode: str
+    ) -> dict[str, Any]:
         policy = suite.policy or getattr(self._runtime, "_default_policy", None)
         snapshot = policy.model_dump(mode="json") if policy else {}
         return {
             "policy": snapshot,
             "git_sha": _git_sha(),
             "repetitions": suite.repetitions,
+            "suite_fingerprint": _suite_fingerprint(suite),
+            "mode": mode,
             **(extras or {}),
         }
 
@@ -140,13 +195,14 @@ class EvalRunner:
         suite,
         case: EvalCase,
         semaphore: asyncio.Semaphore | None,
+        repetitions: int,
     ) -> EvalCaseResult:
         started = monotonic()
         executions: list[tuple[ChatResult, list[dict[str, Any]]]] = []
         errors: list[str] = []
         all_run_ids: list[str] = []
 
-        for _ in range(suite.repetitions):
+        for _ in range(repetitions):
             try:
                 if semaphore is not None:
                     async with semaphore:
@@ -168,12 +224,24 @@ class EvalRunner:
                 duration_ms=(monotonic() - started) * 1000,
                 error="; ".join(errors),
             )
+        return await self._grade_case(
+            suite, case, executions, tuple(all_run_ids), started, errors
+        )
 
+    async def _grade_case(
+        self,
+        suite,
+        case: EvalCase,
+        executions: Sequence[tuple[ChatResult, list[dict[str, Any]]]],
+        run_ids: tuple[str, ...],
+        started: float,
+        errors: Sequence[str] = (),
+    ) -> EvalCaseResult:
         graders = case.graders or suite.graders
         if not graders:
             return EvalCaseResult(
                 case_id=case.id,
-                run_ids=tuple(all_run_ids),
+                run_ids=run_ids,
                 status=EvalStatus.NOT_EVALUATED,
                 failure_reasons=("no graders configured",),
                 duration_ms=(monotonic() - started) * 1000,
@@ -193,13 +261,76 @@ class EvalRunner:
         status = worst_status([result.status for result in grader_results])
         return EvalCaseResult(
             case_id=case.id,
-            run_ids=tuple(all_run_ids),
+            run_ids=run_ids,
             status=status,
             score=sum(scored) / len(scored) if scored else None,
             graders=tuple(grader_results),
             failure_reasons=tuple(failure_reasons),
             duration_ms=(monotonic() - started) * 1000,
         )
+
+    async def _run_replay(
+        self,
+        suite,
+        provenance: dict[str, Any] | None,
+        case_ids: Sequence[str] | None,
+        repetitions: int | None,
+    ) -> EvalRun:
+        """Re-grade previously recorded runs for each case (zero external calls).
+
+        Recorded runs are found via the EvalStore's run-id mapping, and their
+        events/terminal state are read from the runtime's TraceStore.
+        """
+        effective_reps = repetitions if repetitions is not None else suite.repetitions
+        eval_run = EvalRun(
+            suite_id=suite.id,
+            agent_id=suite.agent_id,
+            repetitions=effective_reps,
+            provenance=self._provenance(suite, provenance, mode="replay"),
+        )
+        cases = [
+            case for case in suite.cases if not case_ids or case.id in case_ids
+        ]
+        results = [await self._replay_case(suite, case) for case in cases]
+        eval_run = EvalRun(
+            eval_run_id=eval_run.eval_run_id,
+            suite_id=suite.id,
+            agent_id=suite.agent_id,
+            status="finished",
+            started_at=eval_run.started_at,
+            completed_at=_iso(),
+            repetitions=effective_reps,
+            provenance=eval_run.provenance,
+            cases=tuple(results),
+        )
+        await self._store.save(eval_run)
+        return eval_run
+
+    async def _replay_case(self, suite, case: EvalCase) -> EvalCaseResult:
+        started = monotonic()
+        run_ids = self._store.case_run_ids(suite.id, case.id)
+        if not run_ids:
+            return EvalCaseResult(
+                case_id=case.id,
+                status=EvalStatus.NOT_EVALUATED,
+                failure_reasons=("no recorded run to replay",),
+                duration_ms=(monotonic() - started) * 1000,
+            )
+        executions: list[tuple[ChatResult, list[dict[str, Any]]]] = []
+        for run_id in run_ids:
+            events = self._events_for([run_id])
+            result = _chat_result_from_events(run_id, events)
+            if result is not None:
+                executions.append((result, events))
+        if not executions:
+            return EvalCaseResult(
+                case_id=case.id,
+                run_ids=run_ids,
+                status=EvalStatus.NOT_EVALUATED,
+                failure_reasons=("recorded run has no run_finished event",),
+                duration_ms=(monotonic() - started) * 1000,
+            )
+        return await self._grade_case(suite, case, executions, run_ids, started)
 
     async def _execute_once(
         self, suite, case: EvalCase
