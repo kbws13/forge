@@ -55,7 +55,10 @@ The command serves a loopback-only browser UI at `http://127.0.0.1:8765`,
 modeled on the Google ADK / LangSmith trace consoles: a session list, a
 per-session **Turns** panel (conversation context that stays visible while you
 debug), and an execution tree with a Chrome-devtools-style time ruler and
-waterfall bars. It connects automatically on load (API URL comes from the
+waterfall bars. Runs carry eval badges; an **Evals view** (topbar switch)
+browses eval run history and jumps from a failed case straight into that
+run's execution flow. It connects automatically on load (API URL comes from
+the
 CLI's `--api-url`; connection settings — including an optional API key — are
 remembered in the page's localStorage) and ships light/dark themes.
 
