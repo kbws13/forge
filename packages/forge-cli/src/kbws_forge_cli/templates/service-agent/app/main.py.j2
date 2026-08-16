@@ -29,7 +29,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # 对应 InitRun：从 agents/ 目录自动发现并注册所有 agent
-        runtime = AgentRuntime(plugins=[LoggingPlugin()])
+        runtime = AgentRuntime(
+            plugins=[LoggingPlugin()],
+            default_policy=settings.build_run_policy(),
+        )
         registered = await load_agents(
             settings.agents_dir,
             runtime,

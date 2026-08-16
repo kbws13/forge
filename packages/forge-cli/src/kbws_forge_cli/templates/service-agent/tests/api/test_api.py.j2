@@ -77,6 +77,10 @@ def test_chat_returns_unified_envelope(client, auth_headers) -> None:
     body = resp.json()
     assert body["code"] == 0
     assert "fake agent" in body["data"]["content"]
+    assert body["data"]["duration_ms"] >= 0
+    assert body["data"]["model_calls"] == 1
+    assert body["data"]["tool_calls"] == 0
+    assert body["data"]["usage"]["total_tokens"] == 0
 
 
 def test_chat_stream_emits_sse_events(client, auth_headers) -> None:
@@ -90,8 +94,12 @@ def test_chat_stream_emits_sse_events(client, auth_headers) -> None:
 
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "event: run_started" in body
+    assert "event: model_started" in body
+    assert "event: model_finished" in body
     assert "event: run_finished" in body
     assert "event: run_failed" not in body
+    assert '"event_id":' in body
+    assert '"sequence":' in body
 
 
 def test_chat_stream_unknown_agent_emits_run_failed(client, auth_headers) -> None:

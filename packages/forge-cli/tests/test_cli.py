@@ -5,6 +5,13 @@ from typer.testing import CliRunner
 runner = CliRunner()
 
 
+def test_version_matches_package_release() -> None:
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == "forge 1.1.0"
+
+
 def _invoke_in(tmp_path, monkeypatch, *args):
     monkeypatch.chdir(tmp_path)
     return runner.invoke(app, list(args))

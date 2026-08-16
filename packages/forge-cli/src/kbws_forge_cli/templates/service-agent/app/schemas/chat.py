@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from kbws_forge_runtime import ModelUsage
 from pydantic import BaseModel, Field
 
 
@@ -19,3 +20,7 @@ class ChatResponse(BaseModel):
     session_id: str
     content: str
     parsed: Any | None = None
+    duration_ms: float | None = None
+    model_calls: int = 0
+    tool_calls: int = 0
+    usage: ModelUsage = ModelUsage()

@@ -45,6 +45,16 @@
 | `LOG_DIR` | `logs` | 日志目录 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `AGENTS_DIR` | `agents` | 业务聚合层根目录 |
+| `RUN_TIMEOUT_SECONDS` | 不限制 | 单次 Agent 运行超时 |
+| `RUN_MAX_MODEL_CALLS` | 不限制 | 单次运行最大模型调用数 |
+| `RUN_MAX_TOOL_CALLS` | 不限制 | 单次运行最大工具调用数 |
+| `RUN_MAX_TOTAL_TOKENS` | 不限制 | 单次运行最大 token 数；模型不返回 usage 时失败关闭 |
+| `RUN_MAX_COST_USD` | 不限制 | 单次运行最大费用；模型不返回 cost 时失败关闭 |
+| `RUN_MAX_CONCURRENCY` | 不限制 | 单次运行内模型/工具动作并发上限 |
+| `RUN_MODEL_RETRIES` | `0` | 模型调用重试次数 |
+| `RUN_TOOL_RETRIES` | `0` | 声明为 retryable 的工具重试次数 |
+| `RUN_RETRYABLE_TOOLS` | `[]` | 允许自动重试的工具名 JSON 数组 |
+| `RUN_RETRY_BACKOFF_SECONDS` | `0` | 重试退避秒数 |
 | `DEEPSEEK_API_KEY` | 必填（填在 `.env`） | 模型供应商 key；integration 测试也读取它 |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型 API 地址 |
 | `DEEPSEEK_MODEL` | `deepseek-chat` | 模型名 |
@@ -59,6 +69,8 @@ APP_ENV=prod ./scripts/run.sh
 ```
 
 接口：`GET /api/v1/health`（无鉴权）、`GET /api/v1/agents`、`POST /api/v1/sessions`、`POST /api/v1/chat`、`POST /api/v1/chat_stream`（SSE），统一响应 `{code, info, data}`，鉴权头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`。
+
+`POST /api/v1/chat` 会返回 `duration_ms`、`model_calls`、`tool_calls` 和 `usage`。`POST /api/v1/chat_stream` 会按 `sequence` 输出完整运行轨迹，包括 `model_started/model_finished/model_failed`、`tool_started/tool_finished/tool_failed` 和运行终态事件，可直接作为本地 Eval/trace UI 的数据源。
 
 ## 测试
 

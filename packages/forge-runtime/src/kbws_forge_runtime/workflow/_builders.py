@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, ValidationError
 
+from kbws_forge_runtime.execution import ModelExecutor, ToolExecutor, current_run_context
 from kbws_forge_runtime.middleware import ModelMiddleware
 from kbws_forge_runtime.prompts import Prompt, render_instruction
 from kbws_forge_runtime.workflow.state import WorkflowState
@@ -90,6 +91,7 @@ def build_sequence(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
     builder.add_edge(steps[-1].name, END)
     return _compile(builder, checkpointer)
 
+
 def build_parallel(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> Any:
     if not steps:
         raise ValueError("parallel needs at least one step")
@@ -109,6 +111,7 @@ def build_parallel(steps: Sequence[AgentStep], *, checkpointer: Any = None) -> A
         builder.add_edge(step.name, "join")
     builder.add_edge("join", END)
     return _compile(builder, checkpointer)
+
 
 def build_loop(
     steps: Sequence[AgentStep],
@@ -179,22 +182,17 @@ def build_chat_graph(
         bound_tools.append(output_tool)
     chat_model = model.bind_tools(bound_tools) if bound_tools else model
 
-    async def chat_node(state: WorkflowState, config: RunnableConfig) -> dict[str, Any]:
-        call_variables = config.get("configurable", {}).get("variables") or {}
-        prompt = render_instruction(
-            instruction,
-            history=list(state.get("messages", [])),
-            outputs=state.get("outputs", {}),
-            variables=call_variables,
-        )
-
+    async def invoke_model(state: WorkflowState, prompt: list[BaseMessage]) -> BaseMessage:
         for mw in middlewares:
             result = await mw.before_model(state, prompt)
             if result is not None:
                 prompt = result
 
         async def _call(messages: list[BaseMessage]) -> BaseMessage:
-            return await chat_model.ainvoke(messages)
+            context = current_run_context()
+            if context is None:
+                return await chat_model.ainvoke(messages)
+            return await ModelExecutor(context).ainvoke(lambda: chat_model.ainvoke(messages))
 
         handler = _call
         for mw in reversed(middlewares):
@@ -214,6 +212,18 @@ def build_chat_graph(
             result = await mw.after_model(state, response)
             if result is not None:
                 response = result
+        return response
+
+    async def chat_node(state: WorkflowState, config: RunnableConfig) -> dict[str, Any]:
+        call_variables = config.get("configurable", {}).get("variables") or {}
+        prompt = render_instruction(
+            instruction,
+            history=list(state.get("messages", [])),
+            outputs=state.get("outputs", {}),
+            variables=call_variables,
+        )
+
+        response = await invoke_model(state, prompt)
         return {"messages": [response]}
 
     async def finalize(state: WorkflowState) -> dict[str, Any]:
@@ -243,13 +253,11 @@ def build_chat_graph(
             ),
             last,
         ]
-        retry = await chat_model.ainvoke(retry_prompt)
+        retry = await invoke_model(state, retry_prompt)
         for tc in getattr(retry, "tool_calls", []) or []:
             if tc.get("name") == _OUTPUT_TOOL_NAME:
                 try:
-                    return {
-                        "parsed": output_schema.model_validate(tc.get("args", {})).model_dump()
-                    }
+                    return {"parsed": output_schema.model_validate(tc.get("args", {})).model_dump()}
                 except ValidationError:
                     pass
         return {}
@@ -257,7 +265,22 @@ def build_chat_graph(
     builder.add_node("chat", cast(Any, chat_node))
     builder.add_edge(START, "chat")
     if bound_tools:
-        builder.add_node("tools", ToolNode(list(tools)))
+
+        async def governed_tool_call(request: Any, handler: Any) -> Any:
+            context = current_run_context()
+            if context is None:
+                return await handler(request)
+            tool_call = request.tool_call
+            return await ToolExecutor(context).ainvoke(
+                tool_call["name"],
+                tool_call.get("args"),
+                lambda: handler(request),
+            )
+
+        builder.add_node(
+            "tools",
+            ToolNode(list(tools), awrap_tool_call=governed_tool_call),
+        )
 
         def route(state: WorkflowState) -> str:
             last = state.get("messages", [])[-1] if state.get("messages") else None

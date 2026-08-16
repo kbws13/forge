@@ -31,21 +31,43 @@ def test_root_exports_only_runtime_contract() -> None:
         "ChatPart",
         "ChatRequest",
         "ChatResult",
+        "EventSink",
         "FilePart",
         "ForgeRuntimeError",
         "IllegalParameterError",
+        "InMemoryEventSink",
         "InlineDataPart",
         "MessageCreated",
+        "ModelExecutor",
+        "ModelFailed",
+        "ModelFinished",
+        "ModelStarted",
+        "ModelUsage",
+        "RunBudgetExceededError",
+        "RunCancelled",
+        "RunCancelledError",
+        "RunContext",
         "RunError",
         "RunFailed",
         "RunFinished",
+        "RunPolicy",
         "RunStarted",
+        "RunTimeoutError",
+        "RunUsageUnavailableError",
         "SessionNotFoundError",
         "SessionOwnerError",
         "TextDelta",
         "TextPart",
+        "ToolApprovalHandler",
+        "ToolApprovalRequest",
+        "ToolApprovalRequiredError",
+        "ToolExecutor",
+        "ToolFailed",
         "ToolFinished",
+        "ToolNotAllowedError",
+        "ToolPolicy",
         "ToolStarted",
+        "UsageResolver",
         "UserSession",
     }
     for internal_name in (
@@ -97,5 +119,11 @@ def test_runtime_keeps_registry_and_sessions_private() -> None:
     assert not hasattr(runtime, "registry")
     assert not hasattr(runtime, "sessions")
     parameters = signature(forge.AgentRuntime).parameters
-    assert list(parameters) == ["plugins"]
+    assert list(parameters) == [
+        "plugins",
+        "default_policy",
+        "event_sinks",
+        "tool_approval_handler",
+        "usage_resolver",
+    ]
     assert parameters["plugins"].kind is Parameter.KEYWORD_ONLY

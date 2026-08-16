@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from kbws_forge_runtime.execution import ModelUsage
 from kbws_forge_runtime.models.messages import ChatMessage
 
 
@@ -16,6 +17,10 @@ class ChatResult(BaseModel):
     session_id: str
     message: ChatMessage
     parsed: Any | None = None
+    duration_ms: float | None = None
+    model_calls: int = 0
+    tool_calls: int = 0
+    usage: ModelUsage = ModelUsage()
 
     @property
     def content(self) -> str:

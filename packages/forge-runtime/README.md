@@ -17,7 +17,8 @@ while keeping the core API clean, typed and free of web-framework coupling.
 - **Agent directory convention** — one agent = one directory (`agent.py` + `prompts.py` + `tools.py`), auto-discovered by `load_agents`
 - **Workflow builders** — chat, sequence, parallel and loop graphs over a typed state
 - **Tools** — local tools, MCP (stdio/SSE), and SKILL.md skill loading
-- **Typed events** — a discriminated union of stream events, easy to serialize (e.g. to SSE)
+- **Execution policies** — enforce deadlines, cancellation, call/token/cost budgets, concurrency and tool permissions
+- **Typed action events** — ordered model/tool/run events with timing and usage metadata, ready for SSE or a trace UI
 
 ## Install
 
@@ -78,12 +79,60 @@ asyncio.run(main())
 | `chat(agent_id, user_id, message, session_id=None, variables=None)` | Blocking chat, returns `ChatResult` |
 | `chat_stream(...)` | Async iterator of `ChatEvent`s |
 | `chat_parts(agent_id, user_id, parts, ...)` | Chat with structured content parts |
+| `cancel(run_id, reason="run cancelled")` | Cancel an active run |
+| `active_run_ids()` | IDs of runs active in this runtime process |
+
+### Execution policies
+
+Policies can be configured as the runtime default or supplied per call. Defaults
+are unlimited, so existing applications keep their current behavior.
+
+```python
+from kbws_forge_runtime import AgentRuntime, RunPolicy, ToolPolicy
+
+policy = RunPolicy(
+    timeout_seconds=30,
+    max_model_calls=6,
+    max_tool_calls=10,
+    max_total_tokens=20_000,
+    max_concurrency=4,
+    tool_policy=ToolPolicy(
+        allowed_tools={"search", "read_file"},
+        approval_required={"read_file"},
+    ),
+)
+
+runtime = AgentRuntime(default_policy=policy, tool_approval_handler=approve_tool)
+result = await runtime.chat("assistant", "user-1", "Investigate this issue.")
+```
+
+Model and tool retries are disabled by default. Tool retries additionally require
+the tool name in `ToolPolicy.retryable_tools`, preventing accidental retries of
+side-effecting operations. Token and cost budgets fail closed when the provider
+does not expose the required usage metadata; pass `usage_resolver` to normalize a
+provider-specific response.
+
+Graphs created by `build_chat_graph` (including `Agent.build_graph`) route model
+calls, tool calls and structured-output repair calls through `ModelExecutor` /
+`ToolExecutor`. Custom `ChatGraph` implementations must use those executors
+themselves when they need call budgets, retries or tool-policy enforcement;
+runtime-level timeout and cancellation still apply to the whole graph.
+`InMemoryEventSink` is available for tests and local trace viewers; implement
+`EventSink.emit(event)` to export events elsewhere. Sink failures are logged and
+isolated so observability outages cannot fail an agent run.
 
 ### Stream events
 
 All events share `run_id` / `agent_id` / `session_id` and a discriminated `type`:
 
-`run_started` · `message_created` · `text_delta` · `tool_started` · `tool_finished` · `run_finished` · `run_failed`
+`run_started` · `message_created` · `model_started` · `text_delta` ·
+`model_finished` · `model_failed` · `tool_started` · `tool_finished` ·
+`tool_failed` · `run_finished` · `run_failed` · `run_cancelled`
+
+Events also carry `event_id`, UTC `created_at` and a run-local `sequence`. Action
+events include call/parent IDs and duration; terminal events include model/tool
+call counts and accumulated usage. These fields form the data contract for a
+future ADK-style run/evaluation UI.
 
 ### Composable prompts
 
@@ -231,7 +280,10 @@ runtime = AgentRuntime(plugins=[LoggingPlugin()])
 
 Exceptions inherit `ForgeRuntimeError` and carry a stable `code`:
 
-`E0001` agent not found · `0002` session not found · `0003` session ownership · `0004` illegal parameter · `0005` run error · `0006` MCP config
+`E0001` agent not found · `0002` session not found · `0003` session ownership ·
+`0004` illegal parameter · `0005` run error · `0006` MCP config · `0007` cancelled ·
+`0008` timeout · `0009` budget exceeded · `0010` tool denied ·
+`0011` approval required · `0012` usage unavailable
 
 ## Development
 

@@ -57,7 +57,7 @@ async def client(settings: Settings):
     """
     app = create_app(settings)
     with TestClient(app) as test_client:
-        runtime = AgentRuntime(plugins=[])
+        runtime = AgentRuntime(plugins=[], default_policy=settings.build_run_policy())
         await load_agents(
             "agents",
             runtime,

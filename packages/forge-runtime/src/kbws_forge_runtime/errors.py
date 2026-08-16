@@ -30,3 +30,27 @@ class RunError(ForgeRuntimeError):
 
 class McpConfigError(ForgeRuntimeError):
     code = "0006"
+
+
+class RunCancelledError(ForgeRuntimeError):
+    code = "0007"
+
+
+class RunTimeoutError(ForgeRuntimeError):
+    code = "0008"
+
+
+class RunBudgetExceededError(ForgeRuntimeError):
+    code = "0009"
+
+
+class ToolNotAllowedError(ForgeRuntimeError):
+    code = "0010"
+
+
+class ToolApprovalRequiredError(ForgeRuntimeError):
+    code = "0011"
+
+
+class RunUsageUnavailableError(ForgeRuntimeError):
+    code = "0012"

@@ -17,12 +17,18 @@ logger = logging.getLogger("demo.services.chat")
 
 # SDK 字符串错误码 -> 业务数字码
 _SDK_TO_BUSINESS: dict[str, int] = {
-    "E0001": ErrorCode.NOT_FOUND,   # 智能体不存在
-    "0002": ErrorCode.NOT_FOUND,    # 会话不存在
-    "0003": ErrorCode.FORBIDDEN,    # 会话归属错误
-    "0004": ErrorCode.PARAMS_ERROR, # 非法参数
+    "E0001": ErrorCode.NOT_FOUND,  # 智能体不存在
+    "0002": ErrorCode.NOT_FOUND,  # 会话不存在
+    "0003": ErrorCode.FORBIDDEN,  # 会话归属错误
+    "0004": ErrorCode.PARAMS_ERROR,  # 非法参数
     "0005": ErrorCode.OPERATION_ERROR,
     "0006": ErrorCode.OPERATION_ERROR,
+    "0007": ErrorCode.OPERATION_ERROR,  # run cancelled
+    "0008": ErrorCode.OPERATION_ERROR,  # run timeout
+    "0009": ErrorCode.OPERATION_ERROR,  # run budget exceeded
+    "0010": ErrorCode.OPERATION_ERROR,  # tool not allowed
+    "0011": ErrorCode.OPERATION_ERROR,  # tool approval required
+    "0012": ErrorCode.OPERATION_ERROR,  # usage unavailable
 }
 
 # 业务码 -> HTTP 状态（业务码与 HTTP 语义对齐）
@@ -74,6 +80,10 @@ class ChatService:
             session_id=result.session_id,
             content=result.content,
             parsed=result.parsed,
+            duration_ms=result.duration_ms,
+            model_calls=result.model_calls,
+            tool_calls=result.tool_calls,
+            usage=result.usage,
         )
 
     async def chat_stream(
