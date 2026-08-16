@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -16,3 +18,4 @@ class ChatResponse(BaseModel):
     agent_id: str
     session_id: str
     content: str
+    parsed: Any | None = None

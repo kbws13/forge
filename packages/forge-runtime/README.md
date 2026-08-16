@@ -12,6 +12,8 @@ while keeping the core API clean, typed and free of web-framework coupling.
 
 - **AgentRuntime** — register agents, create sessions, run blocking or streaming chats with plugin hooks
 - **Composable prompts** — code-first prompt blocks (`Prompt`/`Message`/`compose`) with automatic session-history injection
+- **Model middlewares** — deepagents-style hooks (`before_model`/`after_model`/`wrap_model_call`) around every model call
+- **Structured output** — pass any pydantic schema, get parsed results in `ChatResult.parsed` / `RunFinished.parsed`
 - **Agent directory convention** — one agent = one directory (`agent.py` + `prompts.py` + `tools.py`), auto-discovered by `load_agents`
 - **Workflow builders** — chat, sequence, parallel and loop graphs over a typed state
 - **Tools** — local tools, MCP (stdio/SSE), and SKILL.md skill loading
@@ -102,6 +104,55 @@ result = await runtime.chat(
 `build_chat_graph` accepts a plain `str`, a composable `Prompt`, or any
 langchain chat prompt template — so full flexibility (few-shot, example
 selectors, …) is one import away.
+
+### Model middlewares
+
+Intercept every model call (deepagents-style):
+
+```python
+from kbws_forge_runtime.middleware import (
+    AppendSystemContextMiddleware,
+    CallCountMiddleware,
+    LoggingMiddleware,
+)
+
+runtime.register_agent(
+    AgentInfo(agent_id="assistant", name="Assistant"),
+    build_chat_graph(
+        model,
+        instruction="...",
+        middleware=[
+            LoggingMiddleware(),
+            AppendSystemContextMiddleware("Reply in Chinese."),
+        ],
+    ),
+)
+```
+
+Implement your own via `ModelMiddleware` (`before_model` / `after_model` / `wrap_model_call`).
+
+### Structured output
+
+Pass any pydantic schema; the model answers via a tool call whose arguments are parsed into the schema:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Scientist(BaseModel):
+    name: str = Field(description="全名")
+    birth_year: int = Field(description="出生年份")
+    fields: list[str] = Field(description="研究领域")
+
+
+result = await runtime.chat("sci", "u1", "介绍牛顿")
+assert isinstance(result.parsed, Scientist)   # ChatResult.parsed
+# streaming: RunFinished.parsed
+```
+
+Schemas are supplied by the caller — nothing is hard-coded; nested models,
+lists and enums all work. Structured output coexists with regular tools and
+model middlewares (via `Agent(middleware=..., output_schema=...)` too).
 
 ### Agent directory convention
 

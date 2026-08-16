@@ -99,3 +99,23 @@ def test_history_placeholder_drives_memory(real_client) -> None:
         session_id=session["session_id"],
     )
     assert "KBWS_PROMPT_DEMO_99" in second["content"]
+
+
+def test_structured_output_agent_returns_parsed(real_client) -> None:
+    """extract agent：真实模型输出应被解析为 pydantic 对象（output_schema 示例）。"""
+    resp = real_client.post(
+        "/api/v1/chat",
+        json={
+            "agent_id": "extract",
+            "user_id": "prompt-eval",
+            "message": "介绍牛顿：他是物理学家，提出了万有引力定律和三大运动定律。",
+        },
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["code"] == 0, payload
+    parsed = payload["data"]["parsed"]
+    assert parsed is not None
+    assert parsed["name"]  # 主体名
+    assert len(parsed["key_points"]) >= 1  # 关键要点列表

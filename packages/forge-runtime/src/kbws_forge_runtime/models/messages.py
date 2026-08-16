@@ -40,7 +40,8 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     role: Literal["user", "assistant", "system", "tool"]
-    parts: tuple[ChatPart, ...] = Field(min_length=1)
+    # parts 允许为空：assistant 仅返回结构化工具调用时没有文本内容
+    parts: tuple[ChatPart, ...] = ()
 
     @classmethod
     def user(cls, text: str) -> ChatMessage:
@@ -48,7 +49,9 @@ class ChatMessage(BaseModel):
 
     @classmethod
     def assistant(cls, text: str) -> ChatMessage:
-        return cls(role="assistant", parts=(TextPart(text=text),))
+        if text:
+            return cls(role="assistant", parts=(TextPart(text=text),))
+        return cls(role="assistant", parts=())
 
     @property
     def text(self) -> str:

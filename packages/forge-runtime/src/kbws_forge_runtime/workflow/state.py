@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph import add_messages
@@ -19,3 +19,5 @@ class WorkflowState(TypedDict, total=False):
     outputs: Annotated[dict[str, str], merge_outputs]
     round: int
     stop: Annotated[bool, merge_stop]
+    # 结构化输出：由 finalize 节点写入，模型按 output_schema 返回的结果
+    parsed: Any

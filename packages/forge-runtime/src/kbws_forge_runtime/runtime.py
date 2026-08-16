@@ -70,6 +70,7 @@ class AgentRuntime:
                     user_id=user_id,
                     session_id=event.session_id,
                     message=event.message,
+                    parsed=event.parsed,
                 )
         raise RunError("chat stream finished without a result")
 
@@ -132,7 +133,6 @@ class AgentRuntime:
                 await plugin.on_user_message(request, session)
                 await plugin.before_agent(handle.info, session)
 
-            final_message: ChatMessage | None = None
             graph_agent: GraphAgent = handle.graph
             async for event in graph_agent.stream(
                 request_message,
@@ -140,32 +140,21 @@ class AgentRuntime:
                 session_id=session.session_id,
                 variables=variables,
             ):
-                if isinstance(event, MessageCreated) and event.message.role == "assistant":
-                    final_message = event.message
                 await self._notify_event(event)
+                # 副作用在 yield 之前执行：chat() 收到 RunFinished 后会 return，
+                # yield 之后的代码可能永远不会被继续执行
+                if isinstance(event, RunFinished):
+                    result = ChatResult(
+                        run_id=run_id,
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        message=event.message,
+                        parsed=event.parsed,
+                    )
+                    for plugin in self._plugins:
+                        await plugin.after_agent(handle.info, result)
                 yield event
-
-            if final_message is None:
-                raise RunError("agent finished without an assistant message")
-
-            result = ChatResult(
-                run_id=run_id,
-                agent_id=agent_id,
-                user_id=user_id,
-                session_id=session.session_id,
-                message=final_message,
-            )
-            for plugin in self._plugins:
-                await plugin.after_agent(handle.info, result)
-
-            finished = RunFinished(
-                run_id=run_id,
-                agent_id=agent_id,
-                session_id=session.session_id,
-                message=final_message,
-            )
-            await self._notify_event(finished)
-            yield finished
         except Exception as exc:
             if handle is not None:
                 for plugin in self._plugins:

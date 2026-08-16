@@ -12,10 +12,14 @@
 ```
 {{ spec.name }}/
 ├── agents/                          # ★ 业务聚合层：一个子目录 = 一个 agent
-│   └── {{ spec.module_name }}/      #   agent_id = {{ spec.module_name }}
-│       ├── agent.py                 #   Agent 定义（导出 `agent` 对象，SDK 自动发现）
-│       ├── prompts.py               #   代码化 prompt 组件（人设/指令块）
-│       └── tools.py                 #   本 agent 的工具
+│   ├── {{ spec.module_name }}/      #   主 agent（agent_id = {{ spec.module_name }}）
+│   │   ├── agent.py                 #   Agent 定义（导出 `agent` 对象，SDK 自动发现）
+│   │   ├── prompts.py               #   代码化 prompt 组件（人设/指令块）
+│   │   ├── tools.py                 #   本 agent 的工具
+│   │   └── (middleware 示例见 agent.py)
+│   └── extract/                     #   结构化输出示例（output_schema）
+│       ├── agent.py                 #   pydantic schema -> Agent(output_schema=...)
+│       └── prompts.py
 ├── app/                             # 技术分层
 │   ├── main.py                      #   create_app() 工厂 + lifespan：load_agents 自动注册
 │   ├── core/                        #   基础设施（config/enums/exceptions/handlers/response/security/logging/utils）
@@ -37,7 +41,7 @@
 | --- | --- | --- |
 | `APP_ENV` | `dev` | 环境：`dev` / `prod` / `test` |
 | `DEBUG` | `false` | 是否开启 /docs 调试文档 |
-| `API_KEY` | 空 | 服务鉴权 key（`X-API-Key` 或 Bearer 头）；为空则鉴权关闭（仅限本地调试） |
+| `API_KEY` | 非空占位 | 服务鉴权 key（`X-API-Key` 或 Bearer 头）。**为空时鉴权静默关闭**，生产必须设置强随机值 |
 | `LOG_DIR` | `logs` | 日志目录 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `AGENTS_DIR` | `agents` | 业务聚合层根目录 |
@@ -49,7 +53,7 @@
 
 ```bash
 uv sync
-cp .env.example .env        # 填入 DEEPSEEK_API_KEY
+cp .env.example .env        # 填入 DEEPSEEK_API_KEY，并修改 API_KEY
 ./scripts/run.sh            # 默认 dev，带热重载
 APP_ENV=prod ./scripts/run.sh
 ```
@@ -68,6 +72,8 @@ RUN_REAL_PROVIDER_TESTS=1 uv run pytest tests/integration   # 真实 DeepSeek（
 | 想做的事 | 修改位置 |
 | --- | --- |
 | 改 prompt / 人设 | `agents/{{ spec.module_name }}/prompts.py` |
+| 加模型中间件（调用计数/上下文注入/包裹） | `agents/{{ spec.module_name }}/agent.py` 的 `middleware=[...]`；自定义实现见 SDK `ModelMiddleware` |
+| 结构化输出 | 参考 `agents/extract/`：定义 pydantic schema 传给 `Agent(output_schema=...)`，结果在 `ChatResult.parsed` |
 | 加 / 改工具 | `agents/{{ spec.module_name }}/tools.py`（挂到 `agent.py` 的 `tools=[...]`） |
 | 新增 agent | `agents/` 下新建子目录（`agent.py` + `prompts.py` + `tools.py`），重启即自动注册 |
 | 改模型 | `app/providers/llm.py` + `.env` 的 `DEEPSEEK_*` |

@@ -14,6 +14,7 @@ from kbws_forge_runtime.models import (
     FilePart,
     InlineDataPart,
     MessageCreated,
+    RunFinished,
     TextDelta,
     ToolFinished,
     ToolStarted,
@@ -85,7 +86,7 @@ class GraphAgent:
         run_id: str,
         session_id: str,
         variables: dict[str, Any] | None = None,
-    ) -> AsyncIterator[TextDelta | ToolStarted | ToolFinished | MessageCreated]:
+    ) -> AsyncIterator[TextDelta | ToolStarted | ToolFinished | MessageCreated | RunFinished]:
         config = {
             "configurable": {
                 "thread_id": session_id,
@@ -140,16 +141,33 @@ class GraphAgent:
                 output = data.get("output")
                 if isinstance(output, dict) and "messages" in output:
                     final_values = output
+
+        # 最终状态以 aget_state 为准（on_chain_end 的 output 可能不含 parsed 等字段）
+        final_state = dict((await self.graph.aget_state(config)).values)
         if final_values is None:
-            state = await self.graph.aget_state(config)
-            final_values = dict(state.values)
+            final_values = final_state
         message_value = _last_message(final_values)
         if message_value is None:
             raise RuntimeError("graph finished without an assistant message")
 
+        final_message = ChatMessage.assistant(_text_from_content(message_value.content))
         yield MessageCreated(
             run_id=run_id,
             agent_id=self.info.agent_id,
             session_id=session_id,
-            message=ChatMessage.assistant(_text_from_content(message_value.content)),
+            message=final_message,
+        )
+        parsed = final_state.get("parsed")
+        schema = getattr(self.graph, "forge_output_schema", None)
+        if parsed is not None and schema is not None and not isinstance(parsed, schema):
+            try:
+                parsed = schema.model_validate(parsed)
+            except Exception:
+                pass  # 还原失败保持 dict，不阻断结果
+        yield RunFinished(
+            run_id=run_id,
+            agent_id=self.info.agent_id,
+            session_id=session_id,
+            message=final_message,
+            parsed=parsed,
         )

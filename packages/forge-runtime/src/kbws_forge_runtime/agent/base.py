@@ -32,6 +32,9 @@ class Agent(BaseModel):
     mcp: tuple[McpServer, ...] = ()
     skills: tuple[str | Path, ...] = ()
     checkpointer: Any = None
+    # 运行时对象（不参与 pydantic 校验）：模型级中间件
+    middleware: tuple[Any, ...] = ()
+    output_schema: type[BaseModel] | None = None
 
     async def build_graph(self, model_factory: Callable[[], Any]) -> Any:
         """Assemble the chat graph: local tools + MCP tools + skills."""
@@ -53,4 +56,6 @@ class Agent(BaseModel):
             instruction=self.prompt,
             tools=list(toolbox.tools),
             checkpointer=self.checkpointer,
+            middleware=list(self.middleware),
+            output_schema=self.output_schema,
         )

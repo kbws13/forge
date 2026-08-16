@@ -73,6 +73,7 @@ class ChatService:
             agent_id=result.agent_id,
             session_id=result.session_id,
             content=result.content,
+            parsed=result.parsed,
         )
 
     async def chat_stream(

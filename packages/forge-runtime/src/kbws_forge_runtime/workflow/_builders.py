@@ -4,15 +4,21 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
 from langchain_core.prompts import BaseChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
+from langchain_core.utils.function_calling import convert_to_openai_function
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.prebuilt import ToolNode
+from pydantic import BaseModel, ValidationError
 
+from kbws_forge_runtime.middleware import ModelMiddleware
 from kbws_forge_runtime.prompts import Prompt, render_instruction
 from kbws_forge_runtime.workflow.state import WorkflowState
+
+# 结构化输出的专用工具名
+_OUTPUT_TOOL_NAME = "__forge_structured_output"
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,15 +151,33 @@ def build_chat_graph(
     instruction: str | Prompt | BaseChatPromptTemplate,
     tools: Sequence[Any] = (),
     checkpointer: Any = None,
+    middleware: Sequence[ModelMiddleware] = (),
+    output_schema: type[BaseModel] | None = None,
 ) -> Any:
     """Build one chat agent graph, including a local tool loop when needed.
 
     ``instruction`` accepts a plain string (system message), a composable
     ``Prompt`` (code-first blocks with history/variable injection), or any
     langchain chat prompt template for full flexibility.
+
+    ``middleware`` are model-level interceptors (deepagents-style):
+    ``before_model`` / ``after_model`` / ``wrap_model_call`` run around every
+    model call.
+
+    ``output_schema`` is a pydantic model supplied by the caller. The model is
+    asked to answer via a dedicated tool call, whose arguments are parsed into
+    the schema and exposed as ``RunFinished.parsed`` / ``ChatResult.parsed``.
     """
     builder = StateGraph(WorkflowState)
-    chat_model = model.bind_tools(list(tools)) if tools else model
+    middlewares = tuple(middleware)
+
+    bound_tools = list(tools)
+    output_tool: dict[str, Any] | None = None
+    if output_schema is not None:
+        output_tool = convert_to_openai_function(output_schema)
+        output_tool["name"] = _OUTPUT_TOOL_NAME
+        bound_tools.append(output_tool)
+    chat_model = model.bind_tools(bound_tools) if bound_tools else model
 
     async def chat_node(state: WorkflowState, config: RunnableConfig) -> dict[str, Any]:
         call_variables = config.get("configurable", {}).get("variables") or {}
@@ -163,15 +187,101 @@ def build_chat_graph(
             outputs=state.get("outputs", {}),
             variables=call_variables,
         )
-        response = await chat_model.ainvoke(prompt)
+
+        for mw in middlewares:
+            result = await mw.before_model(state, prompt)
+            if result is not None:
+                prompt = result
+
+        async def _call(messages: list[BaseMessage]) -> BaseMessage:
+            return await chat_model.ainvoke(messages)
+
+        handler = _call
+        for mw in reversed(middlewares):
+            previous = handler
+
+            async def wrapped(
+                messages: list[BaseMessage],
+                middleware: ModelMiddleware = mw,
+                next_handler: Any = previous,
+            ) -> BaseMessage:
+                return await middleware.wrap_model_call(messages, next_handler)
+
+            handler = wrapped
+
+        response = await handler(prompt)
+        for mw in reversed(middlewares):
+            result = await mw.after_model(state, response)
+            if result is not None:
+                response = result
         return {"messages": [response]}
+
+    async def finalize(state: WorkflowState) -> dict[str, Any]:
+        """Parse the structured-output tool call into the schema (one retry)."""
+        assert output_schema is not None
+        last = state.get("messages", [])[-1] if state.get("messages") else None
+        args: dict[str, Any] | None = None
+        if isinstance(last, AIMessage) and last.tool_calls:
+            for tc in last.tool_calls:
+                if tc.get("name") == _OUTPUT_TOOL_NAME:
+                    args = tc.get("args", {})
+                    break
+        if args is None:
+            return {}
+        try:
+            # 存 dict：pydantic 实例进 checkpointer 后无法可靠反序列化
+            return {"parsed": output_schema.model_validate(args).model_dump()}
+        except ValidationError:
+            pass
+        # 重试一次：把错误回注，让模型重新输出
+        retry_prompt = [
+            SystemMessage(
+                content=(
+                    f"你上一次的结构化输出无法解析，请修正后重新调用 "
+                    f"{_OUTPUT_TOOL_NAME} 工具。解析错误：{args}"
+                )
+            ),
+            last,
+        ]
+        retry = await chat_model.ainvoke(retry_prompt)
+        for tc in getattr(retry, "tool_calls", []) or []:
+            if tc.get("name") == _OUTPUT_TOOL_NAME:
+                try:
+                    return {
+                        "parsed": output_schema.model_validate(tc.get("args", {})).model_dump()
+                    }
+                except ValidationError:
+                    pass
+        return {}
 
     builder.add_node("chat", cast(Any, chat_node))
     builder.add_edge(START, "chat")
-    if tools:
+    if bound_tools:
         builder.add_node("tools", ToolNode(list(tools)))
-        builder.add_conditional_edges("chat", tools_condition, ["tools", END])
-        builder.add_edge("tools", "chat")
+
+        def route(state: WorkflowState) -> str:
+            last = state.get("messages", [])[-1] if state.get("messages") else None
+            if isinstance(last, AIMessage) and last.tool_calls:
+                names = {tc.get("name") for tc in last.tool_calls}
+                # 只请求结构化输出 -> 直接收尾；请求了真实工具 -> 进工具节点
+                if output_tool is not None and names and names <= {_OUTPUT_TOOL_NAME}:
+                    return "finalize" if output_schema is not None else END
+                if tools:
+                    return "tools"
+            return "finalize" if output_schema is not None else END
+
+        if output_schema is not None:
+            builder.add_node("finalize", cast(Any, finalize))
+            builder.add_edge("finalize", END)
+            builder.add_conditional_edges("chat", route, ["finalize", "tools"])
+        else:
+            builder.add_conditional_edges("chat", route, [END, "tools"])
+        if tools:
+            builder.add_edge("tools", "chat")
     else:
         builder.add_edge("chat", END)
-    return _compile(builder, checkpointer)
+    compiled = _compile(builder, checkpointer)
+    if output_schema is not None:
+        # 动态属性：让 GraphAgent 能把 state 里的 dict 还原回 pydantic 实例
+        compiled.forge_output_schema = output_schema  # type: ignore[attr-defined]
+    return compiled

@@ -28,7 +28,8 @@ def test_agents_accepts_bearer_token(client, auth_headers) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["code"] == 0
-    assert resp.json()["data"][0]["agent_id"] == "{{ spec.module_name }}"
+    agent_ids = [a["agent_id"] for a in resp.json()["data"]]
+    assert "{{ spec.module_name }}" in agent_ids
 
 
 def test_sessions_idempotent_for_same_agent_and_user(client, auth_headers) -> None:

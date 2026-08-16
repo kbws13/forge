@@ -5,6 +5,7 @@ SDK 的 ``load_agents`` 会自动发现并注册。
 """
 
 from kbws_forge_runtime.agent import Agent
+from kbws_forge_runtime.middleware import CallCountMiddleware, LoggingMiddleware
 
 from .prompts import assistant_prompt
 from .tools import add, current_time
@@ -15,4 +16,7 @@ agent = Agent(
     description="General-purpose chat agent with local tools.",
     prompt=assistant_prompt,
     tools=[current_time, add],
+    # 模型级中间件示例：每次模型调用前/后/包裹执行（deepagents 风格）。
+    # 可自定义 ModelMiddleware（before_model / after_model / wrap_model_call）。
+    middleware=[LoggingMiddleware(), CallCountMiddleware()],
 )

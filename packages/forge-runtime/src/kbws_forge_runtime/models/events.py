@@ -45,6 +45,7 @@ class ToolFinished(EventBase):
 class RunFinished(EventBase):
     type: Literal["run_finished"] = "run_finished"
     message: ChatMessage
+    parsed: Any | None = None
 
 
 class RunFailed(EventBase):
