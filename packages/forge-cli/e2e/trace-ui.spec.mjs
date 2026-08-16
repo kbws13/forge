@@ -66,6 +66,18 @@ test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async 
   expect(titles.join(" ")).toContain("Tool completed");
   expect(titles.join(" ")).toContain("Response stream");
 
+  // eval 徽章：foreign run 预置 1 过 1 挂
+  await expect(page.locator(".eval-badge")).toHaveCount(1);
+  await expect(page.locator(".eval-badge")).toHaveText("1/2");
+  await expect(page.locator(".eval-badge")).toHaveClass(/failed/);
+
+  // Eval tab：逐 case 得分 + 失败原因
+  await page.locator('[data-tab="eval"]').click();
+  await expect(page.locator(".eval-case")).toHaveCount(2);
+  await expect(page.locator(".eval-reason").first()).toContainText("tools not called");
+  await expect(page.locator(".eval-case-head").first()).toContainText("add_tool");
+  await page.locator('[data-tab="turns"]').click();
+
   // 模拟“另一个客户端”（node fetch，不经 UI）连发两条同会话 run
   for (const message of ["外部请求一", "外部请求二"]) {
     const res = await fetch(`${stubApiUrl}/chat_stream`, {

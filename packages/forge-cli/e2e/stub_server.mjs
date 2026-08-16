@@ -146,6 +146,42 @@ function summaryOf(run) {
   return summary;
 }
 
+// 预置确定性 eval 结果：foreign run 挂 1 过 1 挂（展示失败原因），其余 run 无 eval
+function evalResultsFor(run) {
+  if (!run.run_id.startsWith("stub-run-foreign")) {
+    return [];
+  }
+  return [
+    {
+      eval_run_id: "stub-eval-1",
+      suite_id: "smoke",
+      case_id: "add_tool",
+      status: "passed",
+      score: 1.0,
+      failure_reasons: [],
+      graders: [
+        { key: "tool_trajectory", status: "passed", score: 1.0, reason: "" },
+      ],
+    },
+    {
+      eval_run_id: "stub-eval-1",
+      suite_id: "smoke",
+      case_id: "time_tool",
+      status: "failed",
+      score: 0.0,
+      failure_reasons: ["tools not called: ['current_time']"],
+      graders: [
+        {
+          key: "tool_trajectory",
+          status: "failed",
+          score: 0.0,
+          reason: "tools not called: ['current_time']",
+        },
+      ],
+    },
+  ];
+}
+
 export function startStubService() {
   return new Promise((resolve) => {
     const runs = new Map();
@@ -222,6 +258,12 @@ export function startStubService() {
           sendJson(res, 200, { code: 0, info: "ok", data: null });
           return;
         }
+      }
+      const evalMatch = url.pathname.match(/^\/api\/v1\/traces\/([^/]+)\/eval$/);
+      if (evalMatch) {
+        const run = runs.get(decodeURIComponent(evalMatch[1]));
+        sendJson(res, 200, { code: 0, info: "ok", data: run ? evalResultsFor(run) : [] });
+        return;
       }
       sendJson(res, 404, { code: 40400, info: "not found", data: null });
     });

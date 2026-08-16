@@ -15,8 +15,7 @@ const state = {
   activeRunId: null,
   activeEventId: null,
   inspectorTab: "turns",
-  filter: "",
-  connected: false,
+  filter: "",  connected: false,
   connecting: false,
   loadingRunId: null,
   autoSelected: false,
@@ -213,6 +212,7 @@ async function loadServiceTraces() {
         if (existing && existing.events.length > 0) {
           record.events = existing.events;
           record.response_text = existing.response_text;
+          record.evalResults = existing.evalResults;
           if (existing.summary) {
             record.summary = existing.summary;
           }
@@ -250,14 +250,20 @@ async function fetchRunDetail(runId) {
   state.loadingRunId = runId;
   renderAll();
   try {
-    const response = await fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}`, {
-      headers: authHeaders(),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw new Error(await responseError(response));
+    const [detailResponse, evalResponse] = await Promise.all([
+      fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      }),
+      fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}/eval`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      }),
+    ]);
+    if (!detailResponse.ok) {
+      throw new Error(await responseError(detailResponse));
     }
-    const payload = await response.json();
+    const payload = await detailResponse.json();
     const full = Array.isArray(payload) ? payload : payload.data;
     if (!full || !Array.isArray(full.events)) {
       throw new Error("The trace detail endpoint returned an unsupported response");
@@ -265,6 +271,13 @@ async function fetchRunDetail(runId) {
     const merged = normalizeRunRecord(full);
     merged.events = full.events;
     merged.response_text = messageText(full.message) || run.response_text || "";
+    if (evalResponse.ok) {
+      const evalPayload = await evalResponse.json();
+      const results = Array.isArray(evalPayload) ? evalPayload : evalPayload.data;
+      if (Array.isArray(results)) {
+        merged.evalResults = results;
+      }
+    }
     const index = state.runs.indexOf(run);
     if (index !== -1) {
       state.runs[index] = merged;
@@ -569,6 +582,10 @@ function renderInvocation(run, items) {
     stat("Tokens", formatNumber(usage.total_tokens ?? 0)),
     stat("Events", String(run.events.length)),
   );
+  const badge = evalBadge(run);
+  if (badge) {
+    stats.append(stat("Eval", badge.label));
+  }
   wrap.append(stats);
   return wrap;
 }
@@ -733,6 +750,10 @@ function renderInspector() {
     elements.inspectorContent.append(renderTurns());
     return;
   }
+  if (state.inspectorTab === "eval") {
+    elements.inspectorContent.append(renderEval());
+    return;
+  }
 
   if (!run) {
     elements.inspectorContent.append(make("p", "empty compact", "No run selected"));
@@ -766,8 +787,15 @@ function renderTurns() {
     line1.append(
       make("span", `status-dot ${run.status}`),
       make("span", "turn-prompt", run.prompt || "Untitled run"),
-      make("span", "turn-time", formatClock(run.started_at)),
     );
+    const badge = evalBadge(run);
+    if (badge) {
+      const chip = make("span", `eval-badge ${badge.status}`);
+      chip.textContent = badge.label;
+      chip.title = `Eval ${badge.score != null ? badge.score.toFixed(2) : "–"} (${badge.passed}/${badge.total})`;
+      line1.append(chip);
+    }
+    line1.append(make("span", "turn-time", formatClock(run.started_at)));
     card.append(line1);
     if (run.response_text) {
       card.append(make("span", "turn-response", run.response_text));
@@ -775,6 +803,26 @@ function renderTurns() {
     list.append(card);
   }
   return list;
+}
+
+function evalBadge(run) {
+  const results = run.evalResults;
+  if (!Array.isArray(results) || results.length === 0) {
+    return null;
+  }
+  const statuses = results.map((result) => result.status);
+  let status = "passed";
+  if (statuses.includes("failed")) {
+    status = "failed";
+  } else if (statuses.includes("not_evaluated")) {
+    status = "not_evaluated";
+  }
+  const passed = results.filter((result) => result.status === "passed").length;
+  const scored = results.filter((result) => typeof result.score === "number");
+  const score = scored.length
+    ? scored.reduce((sum, result) => sum + result.score, 0) / scored.length
+    : null;
+  return { status, label: `${passed}/${results.length}`, score, passed, total: results.length };
 }
 
 function detailView(event) {
@@ -786,6 +834,42 @@ function detailView(event) {
     const row = make("div", "detail-row");
     row.append(make("dt", "", label), make("dd", "", displayValue(value)));
     list.append(row);
+  }
+  return list;
+}
+
+function renderEval() {
+  const run = findRun(state.activeRunId);
+  if (!run) {
+    return make("p", "empty compact", "Select a run to see its eval results");
+  }
+  const results = run.evalResults;
+  if (!Array.isArray(results) || results.length === 0) {
+    return make("p", "empty compact", "No eval results for this run");
+  }
+  const list = make("div", "eval-results");
+  for (const result of results) {
+    const card = make("div", "eval-case");
+    const head = make("div", "eval-case-head");
+    head.append(
+      make("span", `status-dot ${result.status}`),
+      make("span", "eval-case-id", result.case_id),
+      make("span", "eval-case-score", result.score != null ? result.score.toFixed(2) : "–"),
+    );
+    card.append(head);
+    for (const reason of result.failure_reasons || []) {
+      card.append(make("div", "eval-reason", reason));
+    }
+    for (const grader of result.graders || []) {
+      const row = make("div", "eval-grader");
+      row.append(
+        make("span", "eval-grader-key", grader.key),
+        make("span", `eval-grader-status ${grader.status}`, grader.status),
+        make("span", "eval-grader-reason", grader.reason || ""),
+      );
+      card.append(row);
+    }
+    list.append(card);
   }
   return list;
 }
@@ -967,6 +1051,7 @@ function normalizeRunRecord(run) {
     interruption_reason: null,
     summary: null,
     events: [],
+    evalResults: null,
   };
 }
 

@@ -596,6 +596,114 @@ input:focus {
   font-variant-numeric: tabular-nums;
 }
 
+.eval-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eval-badge.passed {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--canvas));
+}
+
+.eval-badge.failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--canvas));
+}
+
+.eval-badge.not_evaluated {
+  border-color: var(--line-strong);
+  color: var(--text-faint);
+}
+
+/* Eval 面板 */
+
+.eval-results {
+  display: grid;
+  gap: 10px;
+}
+
+.eval-case {
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.eval-case-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eval-case-id {
+  overflow: hidden;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-case-score {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.eval-reason {
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.eval-grader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-subtle);
+  font-size: 11px;
+}
+
+.eval-grader-key {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.eval-grader-status {
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.eval-grader-status.passed {
+  color: var(--success);
+}
+
+.eval-grader-status.failed {
+  color: var(--danger);
+}
+
+.eval-grader-reason {
+  grid-column: 1 / -1;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
 .turn-response {
   overflow: hidden;
   color: var(--text-faint);
@@ -912,7 +1020,7 @@ input:focus {
 
 .tab-list {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   border-bottom: 1px solid var(--line-subtle);
 }
 
