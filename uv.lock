@@ -563,7 +563,7 @@ wheels = [
 
 [[package]]
 name = "kbws-forge-cli"
-version = "0.1.1"
+version = "1.0.0"
 source = { editable = "packages/forge-cli" }
 dependencies = [
     { name = "jinja2" },
@@ -584,7 +584,7 @@ requires-dist = [
 
 [[package]]
 name = "kbws-forge-runtime"
-version = "0.1.1"
+version = "1.0.0"
 source = { editable = "packages/forge-runtime" }
 dependencies = [
     { name = "langchain-core" },

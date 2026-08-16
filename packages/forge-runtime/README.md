@@ -30,6 +30,9 @@ pip install "kbws-forge-runtime[openai]"   # OpenAI-compatible chat models
 
 Requires Python ≥ 3.13.
 
+> **v1.0.0**: the public API (`AgentRuntime`, prompts, middlewares,
+> structured output, workflow builders, tools, plugins) is stable.
+
 ## Quick start
 
 ```python

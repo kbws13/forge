@@ -10,7 +10,7 @@ Prompt 组件化、agent 组织方式……这些能力被封装成开箱即用�
 
 | 包 | PyPI | 职责 |
 | --- | --- | --- |
-| [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 运行时 SDK：AgentRuntime、组件化 Prompt、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流 |
+| [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 运行时 SDK：AgentRuntime、组件化 Prompt、模型中间件、结构化输出、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流 |
 | [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | 脚手架 CLI：`forge init` 交互式生成完整分层服务，后续按场景定制 |
 
 ## 快速开始
@@ -24,7 +24,8 @@ uv run uvicorn app.main:app --reload
 ```
 
 生成的即是可运行、可测试、可部署的服务骨架：业务聚合层（`agents/`）+ 技术分层
-（`app/`），内置全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试。
+（`app/`），内置全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试，
+并自带模型中间件与结构化输出的示例 agent。
 
 ## 设计理念
 
