@@ -587,6 +587,7 @@ name = "kbws-forge-runtime"
 version = "1.1.0"
 source = { editable = "packages/forge-runtime" }
 dependencies = [
+    { name = "jsonschema" },
     { name = "langchain-core" },
     { name = "langgraph" },
     { name = "pydantic" },
@@ -617,6 +618,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", specifier = ">=4.20,<5" },
     { name = "langchain-core", specifier = ">=1.0,<2" },
     { name = "langchain-mcp-adapters", marker = "extra == 'mcp'", specifier = ">=0.1,<1" },
     { name = "langchain-openai", marker = "extra == 'openai'", specifier = ">=1.0,<2" },
