@@ -11,7 +11,7 @@ Prompt 组件化、agent 组织方式……这些能力被封装成开箱即用�
 | 包 | PyPI | 职责 |
 | --- | --- | --- |
 | [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 运行时 SDK：AgentRuntime、组件化 Prompt、模型中间件、结构化输出、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流 |
-| [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | 脚手架 CLI：`forge init` 交互式生成完整分层服务，后续按场景定制 |
+| [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | 开发 CLI：`forge init` 生成完整分层服务，`forge trace` 在浏览器检查 Agent 运行轨迹 |
 
 ## 快速开始
 
@@ -21,11 +21,31 @@ forge init my-agent          # 交互式生成项目（Vite 风格）
 cd my-agent
 uv sync                      # 自动安装 kbws-forge-runtime
 uv run uvicorn app.main:app --reload
+# 另开终端，在本地浏览器查看 Agent 运行轨迹（ADK/LangSmith 风格面板）
+forge trace --api-url http://127.0.0.1:8000/api/v1
 ```
 
 生成的即是可运行、可测试、可部署的服务骨架：业务聚合层（`agents/`）+ 技术分层
 （`app/`），内置全局异常、统一响应、API Key 鉴权、多环境配置、日志持久化、分层测试，
 并自带模型中间件与结构化输出的示例 agent。
+
+## Trace 面板
+
+`forge trace` 启动一个只监听 `127.0.0.1` 的浏览器面板，用于审查 Agent 执行过程，
+界面结构参考 Google ADK 与 LangSmith：
+
+- **会话列表**：服务端记录的所有会话（按最新活动排序，可过滤/删除）
+- **Turns 面板**：会话内逐轮对话（状态/消息/回复），几十轮也能滚动审查
+- **执行树**：选中一轮查看其完整执行流——Invocation 头（耗时/模型/工具/token 统计）、
+  Chrome F12 式共享时间轴（刻度标尺 + 瀑布条 + 树形连接线）、事件级详情与原始 JSON
+- **全量 trace**：任何客户端（curl / Yaak / 脚本）发起的 run 都会被服务端记录到
+  `logs/traces.json`（重启不丢），面板自动连接 + 定时刷新即可看到，无需手动操作
+
+```bash
+# 查看 trace 查询 API
+curl -H "X-API-Key: <key>" http://127.0.0.1:8000/api/v1/traces
+curl -H "X-API-Key: <key>" http://127.0.0.1:8000/api/v1/traces/<run_id>
+```
 
 ## 设计理念
 
@@ -53,6 +73,9 @@ forge/
 uv sync --all-extras
 uv run pytest packages/forge-runtime/tests
 uv run pytest packages/forge-cli/tests
+
+# Trace 面板浏览器 e2e（需 Chrome + Node，默认跳过）：
+FORGE_E2E=1 uv run pytest packages/forge-cli/tests/test_e2e_trace_ui.py -v
 ```
 
 ## License

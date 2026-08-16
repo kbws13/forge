@@ -1,0 +1,61 @@
+"""Trace query endpoints: inspect every recorded run, from any client.
+
+The runtime records every run (whoever initiated it) into
+``runtime.trace_store``; these endpoints expose that store to trace UIs and
+other consumers.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
+
+from kbws_forge_runtime import AgentRuntime
+
+from app.api.deps import get_runtime
+from app.core.enums import ErrorCode
+from app.core.exceptions import AppException
+from app.core.response import ok
+from app.core.security import require_api_key
+
+router = APIRouter(tags=["traces"], dependencies=[Depends(require_api_key)])
+
+
+@router.get("/traces")
+async def list_traces(
+    runtime: Annotated[AgentRuntime, Depends(get_runtime)],
+    limit: int = 100,
+) -> dict:
+    """Run summaries, newest first (no events payload)."""
+    return ok(runtime.trace_store.list_runs(limit=limit)).model_dump()
+
+
+@router.get("/traces/{run_id}")
+async def get_trace(
+    run_id: str,
+    runtime: Annotated[AgentRuntime, Depends(get_runtime)],
+) -> dict:
+    """Full run record: summary + all events (the execution flow)."""
+    run = runtime.trace_store.get_run(run_id)
+    if run is None:
+        raise AppException(ErrorCode.NOT_FOUND, "trace not found", http_status=404)
+    return ok(run).model_dump()
+
+
+@router.delete("/traces")
+async def clear_traces(
+    runtime: Annotated[AgentRuntime, Depends(get_runtime)],
+) -> dict:
+    runtime.trace_store.clear()
+    return ok().model_dump()
+
+
+@router.delete("/traces/{run_id}")
+async def delete_trace(
+    run_id: str,
+    runtime: Annotated[AgentRuntime, Depends(get_runtime)],
+) -> dict:
+    if not runtime.trace_store.delete_run(run_id):
+        raise AppException(ErrorCode.NOT_FOUND, "trace not found", http_status=404)
+    return ok().model_dump()

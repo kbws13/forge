@@ -33,6 +33,7 @@ def test_init_default_template_is_service_agent(tmp_path, monkeypatch) -> None:
     pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "my-agent"' in pyproject
     assert "kbws-forge-runtime" in pyproject
+    assert "forge trace" in (proj / "README.md").read_text(encoding="utf-8")
 
 
 def test_init_base_agent_template_creates_hello_world(tmp_path, monkeypatch) -> None:
@@ -114,3 +115,41 @@ def test_init_force_overwrites(tmp_path, monkeypatch) -> None:
     result = _invoke_in(tmp_path, monkeypatch, "init", "my-agent", "--force")
     assert result.exit_code == 0, result.output
     assert (tmp_path / "my-agent" / "app" / "main.py").is_file()
+
+
+def test_trace_command_serves_loopback_ui_without_opening_browser(monkeypatch) -> None:
+    class FakeServer:
+        server_port = 9876
+        api_url = "http://127.0.0.1:9000/api/v1"
+        served = False
+        closed = False
+
+        def serve_forever(self) -> None:
+            self.served = True
+
+        def server_close(self) -> None:
+            self.closed = True
+
+    server = FakeServer()
+    opened: list[str] = []
+    monkeypatch.setattr("kbws_forge_cli.cli.create_trace_server", lambda **_: server)
+    monkeypatch.setattr("kbws_forge_cli.cli.webbrowser.open", opened.append)
+
+    result = runner.invoke(
+        app,
+        ["trace", "--api-url", server.api_url, "--port", "9876", "--no-open"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "http://127.0.0.1:9876/" in result.output
+    assert server.api_url in result.output
+    assert server.served is True
+    assert server.closed is True
+    assert opened == []
+
+
+def test_trace_command_rejects_invalid_api_url() -> None:
+    result = runner.invoke(app, ["trace", "--api-url", "file:///tmp/agent"])
+
+    assert result.exit_code == 1
+    assert "absolute http:// or https:// URL" in result.output

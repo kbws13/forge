@@ -68,9 +68,19 @@ cp .env.example .env        # 填入 DEEPSEEK_API_KEY，并修改 API_KEY
 APP_ENV=prod ./scripts/run.sh
 ```
 
-接口：`GET /api/v1/health`（无鉴权）、`GET /api/v1/agents`、`POST /api/v1/sessions`、`POST /api/v1/chat`、`POST /api/v1/chat_stream`（SSE），统一响应 `{code, info, data}`，鉴权头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`。
+另开终端启动本地 Trace UI：
 
-`POST /api/v1/chat` 会返回 `duration_ms`、`model_calls`、`tool_calls` 和 `usage`。`POST /api/v1/chat_stream` 会按 `sequence` 输出完整运行轨迹，包括 `model_started/model_finished/model_failed`、`tool_started/tool_finished/tool_failed` 和运行终态事件，可直接作为本地 Eval/trace UI 的数据源。
+```bash
+forge trace --api-url http://127.0.0.1:8000/api/v1
+```
+
+UI 只监听 `127.0.0.1`，加载后自动连接服务（连接设置保存在浏览器 localStorage），运行历史展示的是服务端记录的全量 trace（`/api/v1/traces`），每几秒自动刷新，其它客户端产生的 run 也会自动出现。
+
+接口：`GET /api/v1/health`（无鉴权）、`GET /api/v1/agents`、`POST /api/v1/sessions`、`POST /api/v1/chat`、`POST /api/v1/chat_stream`（SSE）、`GET /api/v1/traces`（运行历史列表）、`GET /api/v1/traces/{run_id}`（完整执行流），统一响应 `{code, info, data}`，鉴权头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`。
+
+`POST /api/v1/chat` 会返回 `duration_ms`、`model_calls`、`tool_calls` 和 `usage`。`POST /api/v1/chat_stream` 会按 `sequence` 输出完整运行轨迹，包括 `model_started/model_finished/model_failed`、`tool_started/tool_finished/tool_failed` 和运行终态事件。
+
+每次运行（无论从哪个客户端发起：curl / Yaak / Trace UI）都会被服务端记录到 `logs/traces.json`，可通过 `GET /api/v1/traces` 查询——`forge trace` 的 Trace 面板展示的就是这份全量记录，可查看所有来源的执行流程。
 
 ## 测试
 

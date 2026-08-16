@@ -33,3 +33,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/kbws_forge_cli"]
 # 模板目录在 packages 内，hatchling 会自动打包，无需 force-include
+
+[tool.pytest.ini_options]
+# 只收集本包测试；模板内的 tests/ 会被生成器复制到用户项目，不应在此处收集
+asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]
+norecursedirs = ["src/kbws_forge_cli/templates", "src/kbws_forge_cli/trace_ui", "e2e"]
+markers = [
+    "e2e: browser end-to-end test for the Trace UI (opt-in, FORGE_E2E=1)",
+]

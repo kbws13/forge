@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Forge Trace</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to trace workspace</a>
+
+  <header class="topbar">
+    <div class="brand" aria-label="Forge Trace">
+      <span class="brand-mark">F</span>
+      <span class="brand-name">Forge</span>
+      <span class="brand-sep">/</span>
+      <span class="brand-section">Trace</span>
+    </div>
+
+    <div class="topbar-right">
+      <span id="connection-status" class="status-chip" data-state="idle" aria-live="polite">Offline</span>
+      <button id="refresh-history" class="button" type="button" disabled>Refresh</button>
+      <button id="theme-toggle" class="button button-icon" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div id="connect-bar" class="connect-bar" hidden>
+    <form id="connection-form" class="connection-form">
+      <label class="field field-api">
+        <span>API URL</span>
+        <input id="api-url" name="api-url" type="url" spellcheck="false" required>
+      </label>
+      <label class="field field-key">
+        <span>API Key</span>
+        <input id="api-key" name="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional">
+      </label>
+      <button id="connect-button" class="button button-primary" type="submit">Connect</button>
+    </form>
+  </div>
+
+  <main id="main-content" class="app-shell">
+    <aside class="history-panel" aria-labelledby="history-title">
+      <div class="panel-heading">
+        <h1 id="history-title">Sessions</h1>
+        <button id="clear-history" class="button button-quiet" type="button" disabled>Clear</button>
+      </div>
+      <div class="history-filter">
+        <input id="session-filter" type="search" placeholder="Filter sessions" spellcheck="false" disabled>
+      </div>
+      <div class="history-meta">
+        <span id="history-count">0 sessions</span>
+        <span id="storage-label">Server</span>
+      </div>
+      <div id="history-list" class="history-list">
+        <p class="empty compact">No runs</p>
+      </div>
+    </aside>
+
+    <section class="workspace" aria-labelledby="workspace-title">
+      <h2 id="workspace-title" class="visually-hidden">Trace workspace</h2>
+      <div id="run-view" class="run-view">
+        <div class="empty-state">
+          <p class="empty-title">No trace selected</p>
+          <p class="empty">Select a run from the history.</p>
+        </div>
+      </div>
+    </section>
+
+    <aside class="inspector" aria-labelledby="inspector-title">
+      <div class="panel-heading inspector-heading">
+        <h2 id="inspector-title">Event detail</h2>
+      </div>
+      <div class="tab-list" role="tablist" aria-label="Inspector view">
+        <button class="tab active" type="button" role="tab" data-tab="turns" aria-selected="true">
+          Turns
+        </button>
+        <button class="tab" type="button" role="tab" data-tab="details" aria-selected="false">
+          Details
+        </button>
+        <button class="tab" type="button" role="tab" data-tab="json" aria-selected="false">
+          JSON
+        </button>
+      </div>
+      <div id="inspector-content" class="inspector-content">
+        <p class="empty compact">No event selected</p>
+      </div>
+    </aside>
+  </main>
+</body>
+</html>

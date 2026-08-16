@@ -82,3 +82,42 @@ def test_real_chat_tool_calling(real_client) -> None:
     ).json()
     assert resp["code"] == 0
     assert "5" in resp["data"]["content"]
+
+
+def test_real_chat_stream_emits_tool_trace(real_client) -> None:
+    headers = {"X-API-Key": "test-secret-key"}
+    with real_client.stream(
+        "POST",
+        "/api/v1/chat_stream",
+        json={
+            "agent_id": "{{ spec.module_name }}",
+            "user_id": "real-trace-user",
+            "message": "You must call the add tool to calculate 2 plus 3. Return only the result.",
+        },
+        headers=headers,
+    ) as response:
+        body = "".join(response.iter_text())
+
+    events = _parse_sse_events(body)
+    event_types = [event["type"] for event in events]
+    sequences = [event["sequence"] for event in events]
+
+    assert response.status_code == 200
+    assert sequences == sorted(sequences)
+    assert len({event["run_id"] for event in events}) == 1
+    assert event_types.index("model_started") < event_types.index("tool_started")
+    assert event_types.index("tool_started") < event_types.index("tool_finished")
+    assert event_types.index("tool_finished") < event_types.index("run_finished")
+    assert any(event.get("tool_name") == "add" for event in events)
+    assert any("5" in event.get("tool_output", "") for event in events)
+
+
+def _parse_sse_events(body: str) -> list[dict]:
+    import json
+
+    events = []
+    for frame in body.split("\n\n"):
+        data_lines = [line[6:] for line in frame.splitlines() if line.startswith("data: ")]
+        if data_lines:
+            events.append(json.loads("\n".join(data_lines)))
+    return events

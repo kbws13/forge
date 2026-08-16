@@ -38,7 +38,7 @@ from kbws_forge_runtime.models import (
     UserSession,
 )
 from kbws_forge_runtime.plugins import Plugin
-from kbws_forge_runtime.sinks import EventSink
+from kbws_forge_runtime.sinks import EventSink, TraceStore
 from kbws_forge_runtime.workflow.graph import ChatGraph
 
 logger = logging.getLogger("kbws_forge_runtime")
@@ -57,12 +57,14 @@ class AgentRuntime:
         event_sinks: Sequence[EventSink] = (),
         tool_approval_handler: ToolApprovalHandler | None = None,
         usage_resolver: UsageResolver = default_usage_resolver,
+        trace_store: TraceStore | None = None,
     ) -> None:
         self._registry = AgentRegistry()
         self._sessions = SessionManager()
         self._plugins = tuple(plugins)
         self._default_policy = default_policy or RunPolicy()
-        self._event_sinks = tuple(event_sinks)
+        self.trace_store = trace_store or TraceStore()
+        self._event_sinks = (self.trace_store, *event_sinks)
         self._tool_approval_handler = tool_approval_handler
         self._usage_resolver = usage_resolver
         self._active_runs: dict[str, RunContext] = {}

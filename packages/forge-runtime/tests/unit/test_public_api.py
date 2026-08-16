@@ -2,6 +2,7 @@ from inspect import Parameter, signature
 
 import kbws_forge_runtime as forge
 from kbws_forge_runtime.plugins import LoggingPlugin, Plugin
+from kbws_forge_runtime.sinks import TraceStore
 from kbws_forge_runtime.tools import (
     McpConfigError,
     McpToolLoader,
@@ -118,6 +119,8 @@ def test_runtime_keeps_registry_and_sessions_private() -> None:
     runtime = forge.AgentRuntime(plugins=[])
     assert not hasattr(runtime, "registry")
     assert not hasattr(runtime, "sessions")
+    # trace_store 是公开的 trace 记录器（服务端 trace API / UI 的数据源）
+    assert isinstance(runtime.trace_store, TraceStore)
     parameters = signature(forge.AgentRuntime).parameters
     assert list(parameters) == [
         "plugins",
@@ -125,5 +128,6 @@ def test_runtime_keeps_registry_and_sessions_private() -> None:
         "event_sinks",
         "tool_approval_handler",
         "usage_resolver",
+        "trace_store",
     ]
     assert parameters["plugins"].kind is Parameter.KEYWORD_ONLY

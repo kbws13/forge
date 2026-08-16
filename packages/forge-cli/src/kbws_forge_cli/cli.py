@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import webbrowser
 from pathlib import Path
 
 import questionary
@@ -11,6 +12,12 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from kbws_forge_cli.generator import Generator, ProjectSpec
+from kbws_forge_cli.trace_server import (
+    DEFAULT_API_URL,
+    DEFAULT_TRACE_PORT,
+    TRACE_HOST,
+    create_trace_server,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 DEFAULT_TEMPLATE = "service-agent"
@@ -141,6 +148,50 @@ def init_command(
     console.print(f"  cd {spec.name}")
     console.print("  uv sync")
     console.print("  uv run uvicorn app.main:app --reload")
+
+
+@app.command("trace")
+def trace_command(
+    api_url: str = typer.Option(
+        DEFAULT_API_URL,
+        "--api-url",
+        help="Forge service API base URL.",
+    ),
+    port: int = typer.Option(
+        DEFAULT_TRACE_PORT,
+        "--port",
+        min=1,
+        max=65535,
+        help="Local port for the Trace UI.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the Trace UI in the default browser.",
+    ),
+) -> None:
+    """Inspect Forge agent runs in a local browser UI."""
+    console = Console()
+    try:
+        server = create_trace_server(api_url=api_url, port=port)
+    except (OSError, ValueError) as exc:
+        console.print(f"[bold red]Could not start Forge Trace:[/bold red] {exc}")
+        raise typer.Exit(1) from exc
+
+    ui_url = f"http://{TRACE_HOST}:{server.server_port}/"
+    console.print(f"Forge Trace: [bold cyan]{ui_url}[/bold cyan]")
+    console.print(f"Agent API:   [cyan]{server.api_url}[/cyan]")
+    console.print("Press Ctrl-C to stop.")
+
+    if open_browser:
+        webbrowser.open(ui_url)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        console.print("\nForge Trace stopped.")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":
