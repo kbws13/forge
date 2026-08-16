@@ -82,6 +82,19 @@ UI 只监听 `127.0.0.1`，加载后自动连接服务（连接设置保存在�
 
 每次运行（无论从哪个客户端发起：curl / Yaak / Trace UI）都会被服务端记录到 `logs/traces.json`，可通过 `GET /api/v1/traces` 查询——`forge trace` 的 Trace 面板展示的就是这份全量记录，可查看所有来源的执行流程。
 
+### 评估（Eval）
+
+`evals/` 目录里的 Python 文件即评估套件（代码优先，同 `agents/` 模式）：每个文件导出 `suite` 或 `suites`（`EvalSuite`），启动时自动发现。运行会真实调用模型（受 suite 内 `RunPolicy` 的并发/超时/预算限制）：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/evals/smoke/run      # 运行 smoke 套件
+curl http://127.0.0.1:8000/api/v1/evals                        # 已发现的套件
+curl http://127.0.0.1:8000/api/v1/evals/runs                   # 评估历史
+curl http://127.0.0.1:8000/api/v1/traces/<run_id>/eval         # 某次运行对应的评估
+```
+
+确定性 grader（`exact / contains / regex / json_schema / tool_trajectory`）开箱即用；`llm_judge(model_factory, rubric)` 可选。结果持久化到 `logs/evals/`，与 `run_id` 关联——Trace 面板可直接看到每条 run 的得分与失败原因。
+
 ## 测试
 
 ```bash

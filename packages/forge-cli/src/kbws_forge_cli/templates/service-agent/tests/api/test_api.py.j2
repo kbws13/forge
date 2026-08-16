@@ -169,3 +169,72 @@ def test_traces_require_auth_and_404_for_unknown(client, auth_headers) -> None:
     resp = client.get("/api/v1/traces/does-not-exist", headers=auth_headers)
     assert resp.status_code == 404
     assert resp.json()["code"] == 40400
+
+
+def test_evals_list_requires_auth_and_lists_suites(client, auth_headers) -> None:
+    resp = client.get("/api/v1/evals")
+    assert resp.status_code == 401
+
+    resp = client.get("/api/v1/evals", headers=auth_headers)
+    assert resp.status_code == 200
+    suites = resp.json()["data"]
+    assert any(suite["id"] == "api_test" for suite in suites)
+    api_test = next(suite for suite in suites if suite["id"] == "api_test")
+    assert api_test["agent_id"] == "{{ spec.module_name }}"
+    assert api_test["case_ids"] == ["greet", "missing"]
+
+
+def test_eval_run_live_returns_scores_and_run_ids(client, auth_headers) -> None:
+    resp = client.post("/api/v1/evals/api_test/run", headers=auth_headers)
+    assert resp.status_code == 200
+    run = resp.json()["data"]
+    assert run["status"] == "finished"
+    assert run["totals"]["total"] == 2
+    assert run["totals"]["passed"] == 1
+    assert run["totals"]["failed"] == 1
+
+    by_id = {case["case_id"]: case for case in run["cases"]}
+    assert by_id["greet"]["status"] == "passed"
+    assert by_id["missing"]["status"] == "failed"
+    assert by_id["missing"]["failure_reasons"] == [
+        "expected 'nope', got 'Hello from fake agent.'"
+    ]
+
+
+def test_eval_run_ids_link_to_trace_store(client, auth_headers) -> None:
+    resp = client.post("/api/v1/evals/api_test/run", headers=auth_headers)
+    run_id = resp.json()["data"]["cases"][0]["run_ids"][0]
+
+    trace = client.get(f"/api/v1/traces/{run_id}", headers=auth_headers)
+    assert trace.status_code == 200
+
+    evals = client.get(f"/api/v1/traces/{run_id}/eval", headers=auth_headers)
+    assert evals.status_code == 200
+    hits = evals.json()["data"]
+    assert len(hits) == 1
+    assert hits[0]["case_id"] == "greet"
+
+
+def test_eval_run_history_and_detail(client, auth_headers) -> None:
+    created = client.post("/api/v1/evals/api_test/run", headers=auth_headers).json()["data"]
+    eval_run_id = created["eval_run_id"]
+
+    listed = client.get("/api/v1/evals/runs", headers=auth_headers)
+    assert any(run["eval_run_id"] == eval_run_id for run in listed.json()["data"])
+
+    detail = client.get(f"/api/v1/evals/runs/{eval_run_id}", headers=auth_headers)
+    assert detail.json()["data"]["cases"][0]["case_id"] == "greet"
+
+
+def test_eval_unknown_suite_and_replay_mode_rejected(client, auth_headers) -> None:
+    resp = client.post("/api/v1/evals/nope/run", headers=auth_headers)
+    assert resp.status_code == 404
+    assert resp.json()["code"] == 40400
+
+    resp = client.post(
+        "/api/v1/evals/api_test/run",
+        json={"mode": "replay"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+    assert "Phase 4a" in resp.json()["info"]

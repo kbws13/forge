@@ -7,12 +7,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from kbws_forge_runtime import AgentRuntime
+from kbws_forge_runtime import AgentRuntime, EvalStore
 from kbws_forge_runtime.agent import load_agents
+from kbws_forge_runtime.evals.discovery import load_eval_suites
 from kbws_forge_runtime.plugins import LoggingPlugin
 from kbws_forge_runtime.sinks import TraceStore
 
-from app.api.v1 import agents, chat, health, sessions, traces
+from app.api.v1 import agents, chat, evals, health, sessions, traces
 from app.core.config import Settings
 from app.core.constants import API_V1_PREFIX
 from app.core.handlers import register_exception_handlers
@@ -42,7 +43,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             model_factory=lambda: build_model(settings),
         )
         app.state.runtime = runtime
-        logger.info("runtime ready agents=%s", registered)
+        # 评估：发现 evals/ 下的 suite + 持久化到 logs/evals/
+        app.state.eval_suites = load_eval_suites(settings.evals_dir)
+        app.state.eval_store = EvalStore(persist_dir=settings.log_dir / "evals")
+        logger.info(
+            "runtime ready agents=%s eval_suites=%s",
+            registered,
+            [suite.id for suite in app.state.eval_suites],
+        )
         yield
         logger.info("runtime shutdown")
 
@@ -70,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sessions.router, prefix=API_V1_PREFIX)
     app.include_router(chat.router, prefix=API_V1_PREFIX)
     app.include_router(traces.router, prefix=API_V1_PREFIX)
+    app.include_router(evals.router, prefix=API_V1_PREFIX)
     return app
 
 

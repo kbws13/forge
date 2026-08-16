@@ -49,12 +49,15 @@ def settings() -> Settings:
 
 
 @pytest.fixture
-async def client(settings: Settings):
+async def client(settings: Settings, tmp_path):
     """TestClient with a fake-model runtime injected (no paid API calls).
 
     Uses the real ``load_agents`` discovery against the demo agents/ tree,
-    but with a fake model factory so nothing is billed.
+    but with a fake model factory so nothing is billed. Eval suites are
+    replaced with a deterministic fixture suite and a temp store.
     """
+    from kbws_forge_runtime import EvalCase, EvalStore, EvalSuite, exact
+
     app = create_app(settings)
     with TestClient(app) as test_client:
         runtime = AgentRuntime(plugins=[], default_policy=settings.build_run_policy())
@@ -64,6 +67,28 @@ async def client(settings: Settings):
             model_factory=lambda: BindableFakeChatModel(responses=["Hello from fake agent."]),
         )
         app.state.runtime = runtime
+        # 注入确定性 eval suite + 临时 store（不污染项目 logs/evals/）
+        app.state.eval_suites = [
+            EvalSuite(
+                id="api_test",
+                agent_id="{{ spec.module_name }}",
+                cases=(
+                    EvalCase(
+                        id="greet",
+                        input="hi",
+                        expected="Hello from fake agent.",
+                        graders=(exact(),),
+                    ),
+                    EvalCase(
+                        id="missing",
+                        input="hi",
+                        expected="nope",
+                        graders=(exact(),),
+                    ),
+                ),
+            )
+        ]
+        app.state.eval_store = EvalStore(persist_dir=tmp_path / "evals")
         yield test_client
 
 

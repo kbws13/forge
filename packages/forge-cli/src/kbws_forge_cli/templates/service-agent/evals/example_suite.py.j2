@@ -1,0 +1,41 @@
+"""Smoke eval suite for the generated agent.
+
+真实使用示例：跑 `POST /api/v1/evals/smoke/run` 触发，模型会被真实调用
+（受 suite.policy 的并发/超时/预算限制）。
+"""
+
+from kbws_forge_runtime import EvalCase, EvalSuite, RunPolicy, contains, tool_trajectory
+
+suite = EvalSuite(
+    id="smoke",
+    name="Smoke test",
+    description="{{ spec.name }} 基础行为：工具轨迹 + 回复包含关键内容",
+    agent_id="{{ spec.module_name }}",
+    policy=RunPolicy(
+        max_concurrency=2,
+        timeout_seconds=60,
+        # 注意：DeepSeek 不返回 cost 字段，配 max_cost_usd 会 fail-closed；
+        # 预算用 token 口径（usage 总是有）
+        max_total_tokens=20000,
+    ),
+    cases=(
+        EvalCase(
+            id="add_tool",
+            input="3+4等于多少",
+            expected=["add"],
+            graders=(tool_trajectory(),),
+        ),
+        EvalCase(
+            id="time_tool",
+            input="现在几点",
+            expected=["current_time"],
+            graders=(tool_trajectory(),),
+        ),
+        EvalCase(
+            id="replies",
+            input="你好",
+            expected="你好",
+            graders=(contains("你好"),),
+        ),
+    ),
+)

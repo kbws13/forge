@@ -1,0 +1,116 @@
+"""Eval API: list discovered suites, trigger runs, query results.
+
+Eval suites are code in the project's ``evals/`` directory (discovered at
+startup, like agents). Runs execute inside the service process via
+``EvalRunner`` (reusing RunPolicy for concurrency/timeout/budget) and persist
+to ``logs/evals/`` — linked to agent runs by ``run_id`` so the trace UI can
+show scores and failure reasons next to execution flows.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+
+from fastapi import APIRouter, Depends, Request
+from kbws_forge_runtime import AgentRuntime, EvalRunner, EvalStore, EvalSuite
+from pydantic import BaseModel
+
+from app.api.deps import get_runtime
+from app.core.enums import ErrorCode
+from app.core.exceptions import AppException
+from app.core.response import ok
+from app.core.security import require_api_key
+
+router = APIRouter(tags=["evals"], dependencies=[Depends(require_api_key)])
+
+
+class EvalRunRequest(BaseModel):
+    mode: Literal["live", "replay"] = "live"
+    case_ids: list[str] | None = None
+
+
+def _suites(request: Request) -> list[EvalSuite]:
+    return request.app.state.eval_suites
+
+
+def _store(request: Request) -> EvalStore:
+    return request.app.state.eval_store
+
+
+def _suite_or_404(request: Request, suite_id: str) -> EvalSuite:
+    for suite in _suites(request):
+        if suite.id == suite_id:
+            return suite
+    raise AppException(ErrorCode.NOT_FOUND, f"eval suite not found: {suite_id}", http_status=404)
+
+
+def _suite_summary(suite: EvalSuite) -> dict[str, Any]:
+    return {
+        "id": suite.id,
+        "name": suite.name,
+        "description": suite.description,
+        "agent_id": suite.agent_id,
+        "case_ids": [case.id for case in suite.cases],
+        "tags": list(suite.tags),
+        "policy": suite.policy.model_dump(mode="json") if suite.policy else None,
+        "repetitions": suite.repetitions,
+    }
+
+
+def _run_payload(run) -> dict[str, Any]:
+    data = run.model_dump(mode="json")
+    data["totals"] = run.totals
+    data["average_score"] = run.average_score
+    return data
+
+
+@router.get("/evals")
+async def list_evals(request: Request) -> dict:
+    """Discovered eval suites (code in the project's evals/ directory)."""
+    return ok([_suite_summary(suite) for suite in _suites(request)]).model_dump()
+
+
+@router.post("/evals/{suite_id}/run")
+async def run_eval(
+    suite_id: str,
+    request: Request,
+    runtime: Annotated[AgentRuntime, Depends(get_runtime)],
+    body: EvalRunRequest | None = None,
+) -> dict:
+    """Execute a suite (live) and return the full EvalRun."""
+    suite = _suite_or_404(request, suite_id)
+    mode = (body.mode if body else "live")
+    if mode == "replay":
+        raise AppException(
+            ErrorCode.OPERATION_ERROR,
+            "replay mode lands in Phase 4a; use mode=live",
+            http_status=400,
+        )
+    settings = request.app.state.settings
+    runner = EvalRunner(runtime, store=_store(request))
+    eval_run = await runner.run(
+        suite,
+        mode="live",
+        case_ids=body.case_ids if body else None,
+        provenance={"model": settings.deepseek_model},
+    )
+    return ok(_run_payload(eval_run)).model_dump()
+
+
+@router.get("/evals/runs")
+async def list_eval_runs(request: Request, limit: int = 100) -> dict:
+    """Eval run history, newest first (summaries)."""
+    return ok(_store(request).list_runs(limit=limit)).model_dump()
+
+
+@router.get("/evals/runs/{eval_run_id}")
+async def get_eval_run(eval_run_id: str, request: Request) -> dict:
+    run = _store(request).get_run(eval_run_id)
+    if run is None:
+        raise AppException(ErrorCode.NOT_FOUND, "eval run not found", http_status=404)
+    return ok(run).model_dump()
+
+@router.get("/traces/{run_id}/eval")
+async def trace_eval_results(run_id: str, request: Request) -> dict:
+    """Eval results attached to an agent run (trace UI link)."""
+    return ok(_store(request).by_run_id(run_id)).model_dump()
