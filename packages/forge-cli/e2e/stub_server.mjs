@@ -146,6 +146,57 @@ function summaryOf(run) {
   return summary;
 }
 
+// 预置一个 eval run（suite smoke，2 case，其中 1 挂），结果关联到 foreign run
+function evalRunsFor(runs) {
+  const foreign = [...runs.values()].find((run) => run.run_id.startsWith("stub-run-foreign"));
+  const runIds = foreign ? [foreign.run_id] : [];
+  return [
+    {
+      eval_run_id: "stub-eval-run-1",
+      suite_id: "smoke",
+      agent_id: "test_agent",
+      status: "finished",
+      started_at: "2026-08-16T04:42:58.000Z",
+      completed_at: "2026-08-16T04:43:02.000Z",
+      repetitions: 1,
+      provenance: {
+        mode: "live",
+        model: "stub-model",
+        git_sha: "deadbeef",
+        suite_fingerprint: "aabbccdd",
+        policy: { timeout_seconds: 60, max_total_tokens: 20000, max_concurrency: 2 },
+      },
+      average_score: 0.5,
+      totals: { total: 2, passed: 1, failed: 1, not_evaluated: 0, evaluated: 2 },
+      cases: [
+        {
+          case_id: "add_tool",
+          run_ids: runIds,
+          status: "passed",
+          score: 1.0,
+          failure_reasons: [],
+          graders: [{ key: "tool_trajectory", status: "passed", score: 1.0, reason: "" }],
+        },
+        {
+          case_id: "time_tool",
+          run_ids: runIds,
+          status: "failed",
+          score: 0.0,
+          failure_reasons: ["tools not called: ['current_time']"],
+          graders: [
+            {
+              key: "tool_trajectory",
+              status: "failed",
+              score: 0.0,
+              reason: "tools not called: ['current_time']",
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 // 预置确定性 eval 结果：foreign run 挂 1 过 1 挂（展示失败原因），其余 run 无 eval
 function evalResultsFor(run) {
   if (!run.run_id.startsWith("stub-run-foreign")) {
@@ -258,6 +309,21 @@ export function startStubService() {
           sendJson(res, 200, { code: 0, info: "ok", data: null });
           return;
         }
+      }
+      if (url.pathname === "/api/v1/evals/runs" && req.method === "GET") {
+        const evalRuns = evalRunsFor(runs);
+        sendJson(res, 200, {
+          code: 0,
+          info: "ok",
+          data: evalRuns.map(({ cases: _c, ...summary }) => ({ ...summary })),
+        });
+        return;
+      }
+      const evalRunMatch = url.pathname.match(/^\/api\/v1\/evals\/runs\/([^/]+)$/);
+      if (evalRunMatch && req.method === "GET") {
+        const run = evalRunsFor(runs).find((item) => item.eval_run_id === decodeURIComponent(evalRunMatch[1]));
+        sendJson(res, 200, { code: 0, info: "ok", data: run || null });
+        return;
       }
       const evalMatch = url.pathname.match(/^\/api\/v1\/traces\/([^/]+)\/eval$/);
       if (evalMatch) {

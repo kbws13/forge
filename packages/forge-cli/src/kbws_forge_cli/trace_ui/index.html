@@ -21,6 +21,10 @@
     </div>
 
     <div class="topbar-right">
+      <div class="view-switch" role="tablist" aria-label="View mode">
+        <button id="view-trace" class="view-switch-button active" type="button" role="tab" aria-selected="true">Trace</button>
+        <button id="view-evals" class="view-switch-button" type="button" role="tab" aria-selected="false">Evals</button>
+      </div>
       <span id="connection-status" class="status-chip" data-state="idle" aria-live="polite">Offline</span>
       <button id="refresh-history" class="button" type="button" disabled>Refresh</button>
       <button id="theme-toggle" class="button button-icon" type="button" title="Toggle theme" aria-label="Toggle theme">◐</button>

@@ -168,6 +168,32 @@ input:focus-visible {
   gap: 8px;
 }
 
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 2px;
+}
+
+.view-switch-button {
+  min-height: 24px;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 120ms, color 120ms;
+}
+
+.view-switch-button.active {
+  background: var(--canvas);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-subtle);
+}
+
 .status-chip {
   display: inline-flex;
   min-height: 26px;
@@ -738,6 +764,49 @@ input:focus {
   text-transform: uppercase;
   color: var(--text-muted);
   cursor: pointer;
+}
+
+.eval-cases-table {
+  display: grid;
+  padding: 4px 0 20px;
+}
+
+.eval-case-row {
+  display: grid;
+  min-height: 34px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line-subtle);
+  background: transparent;
+  padding: 0 14px;
+  text-align: left;
+  transition: background-color 120ms;
+}
+
+.eval-case-row:hover {
+  background: var(--surface-1);
+}
+
+.eval-case-row.selected {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.eval-case-row-id {
+  overflow: hidden;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eval-case-row-score {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .invocation-id {

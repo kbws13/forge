@@ -139,6 +139,22 @@ test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async 
   await expect(page.locator(".timeline-event").first()).toBeVisible({ timeout: 10000 });
   await expect(page.locator(".turn-card").nth(9)).toHaveClass(/active/);
 
+  // Evals 视图：切换后显示评估历史 → 选中 → 逐 case 结果 → 点 case 跳进对应 run 的执行流
+  await page.locator("#view-evals").click();
+  await expect(page.locator("#view-evals")).toHaveClass(/active/);
+  await expect(page.locator(".session-item")).toHaveCount(1);
+  await page.locator(".session-select").first().click();
+  await expect(page.locator(".eval-case-row")).toHaveCount(2);
+  await expect(page.locator(".eval-case-row-score").first()).toHaveText("1.00");
+  await expect(page.locator(".invocation-header")).toContainText("1/2 passed");
+  // 点失败的 case → 跳回 Trace 视图并打开对应 run
+  await page.locator(".eval-case-row").nth(1).click();
+  await expect(page.locator("#view-trace")).toHaveClass(/active/);
+  await expect(page.locator(".timeline-event").first()).toBeVisible({ timeout: 10000 });
+  // 回到 Trace 视图后徽章仍在（run 的 eval 结果）
+  await expect(page.locator(".eval-badge").first()).toBeVisible();
+  await page.locator("#view-trace").click();
+
   // 刷新 → 依然自动连接，数据从服务端恢复
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.locator("#connection-status")).toHaveText(/1 agent/, { timeout: 10000 });
