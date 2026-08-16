@@ -10,7 +10,7 @@ def test_version_matches_package_release() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "forge 1.2.0"
+    assert result.output.strip() == "forge 1.2.1"
 
 
 def _invoke_in(tmp_path, monkeypatch, *args):
