@@ -41,9 +41,16 @@ def _full_run_events() -> list:
     return [
         _event(RunStarted, sequence=1),
         _event(MessageCreated, sequence=2, message=_user_message()),
-        _event(ModelFinished, sequence=3, call_id="c1", usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}),
+        _event(
+            ModelFinished,
+            sequence=3,
+            call_id="c1",
+            usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        ),
         _event(ToolStarted, sequence=4, tool_name="current_time", call_id="t1"),
-        _event(ToolFinished, sequence=5, tool_name="current_time", tool_output="12:00", call_id="t1"),
+        _event(
+            ToolFinished, sequence=5, tool_name="current_time", tool_output="12:00", call_id="t1"
+        ),
         _event(TextDelta, sequence=6, text="hi"),
         _event(
             RunFinished,
@@ -96,7 +103,9 @@ async def test_newest_first_and_cap() -> None:
     for index in range(5):
         await store.emit(_event(RunStarted, run_id=f"run-{index}", sequence=1))
         await store.emit(
-            _event(RunFinished, run_id=f"run-{index}", sequence=2, message=ChatMessage.assistant("ok"))
+            _event(
+                RunFinished, run_id=f"run-{index}", sequence=2, message=ChatMessage.assistant("ok")
+            ),
         )
 
     runs = store.list_runs()
