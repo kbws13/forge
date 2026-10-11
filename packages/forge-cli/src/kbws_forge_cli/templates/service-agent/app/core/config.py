@@ -30,8 +30,6 @@ class Settings(BaseSettings):
     # --- agents ---
     # 业务聚合层根目录：一个子目录 = 一个 agent（见 agents/assistant/ 示例）
     agents_dir: str = "agents"
-    # 评估套件目录：一个 .py = 一个 EvalSuite（导出 `suite` 或 `suites`）
-    evals_dir: str = "evals"
 
     # --- run policy ---
     run_timeout_seconds: float | None = Field(default=None, gt=0)
@@ -48,7 +46,7 @@ class Settings(BaseSettings):
     # --- model provider ---
     deepseek_api_key: SecretStr
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-flash"
 
     def build_run_policy(self) -> RunPolicy:
         return RunPolicy(

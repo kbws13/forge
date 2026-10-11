@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 
 from kbws_forge_runtime import AgentRuntime
 from kbws_forge_runtime.errors import ForgeRuntimeError
@@ -29,6 +30,7 @@ _SDK_TO_BUSINESS: dict[str, int] = {
     "0010": ErrorCode.OPERATION_ERROR,  # tool not allowed
     "0011": ErrorCode.OPERATION_ERROR,  # tool approval required
     "0012": ErrorCode.OPERATION_ERROR,  # usage unavailable
+    "0013": ErrorCode.OPERATION_ERROR,  # structured output invalid
 }
 
 # 业务码 -> HTTP 状态（业务码与 HTTP 语义对齐）
@@ -95,10 +97,13 @@ class ChatService:
         variables: dict | None = None,
     ) -> AsyncIterator[str]:
         # 流式路径不抛异常：未知 agent / 会话错误以 run_failed 事件发出
-        async for event in self._runtime.chat_stream(
-            agent_id, user_id, message, session_id=session_id, variables=variables
-        ):
-            yield sse_frame(event.type, event)
+        async with aclosing(
+            self._runtime.chat_stream(
+                agent_id, user_id, message, session_id=session_id, variables=variables
+            )
+        ) as stream:
+            async for event in stream:
+                yield sse_frame(event.type, event)
 
 
 def _map_code(exc: ForgeRuntimeError) -> int:

@@ -9,9 +9,11 @@ export default {
   timeout: 120_000,
   expect: { timeout: 10_000 },
   use: {
-    // Uses the locally installed Chrome when present; otherwise run
-    // `npx playwright install chromium` and drop the channel line.
-    channel: "chrome",
+    // The Python bridge discovers local Chrome/Edge on Windows, Linux and macOS.
+    // Without a system browser, use `npx playwright install chromium`.
+    launchOptions: process.env.FORGE_BROWSER_EXECUTABLE
+      ? { executablePath: process.env.FORGE_BROWSER_EXECUTABLE }
+      : {},
     headless: true,
     viewport: { width: 1440, height: 860 },
     baseURL: process.env.TRACE_UI_URL || "http://127.0.0.1:8765",

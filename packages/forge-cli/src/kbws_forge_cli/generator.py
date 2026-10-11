@@ -12,7 +12,7 @@ TEMPLATES_ROOT = Path(__file__).resolve().parent / "templates"
 
 # 模板依赖的 runtime 最低版本：随 CLI 发版同步提升（lockstep 策略）。
 # 模板代码可能用到新 SDK API，必须确保生成的项目能装到满足要求的 runtime。
-RUNTIME_MIN_VERSION = "1.2.0"
+RUNTIME_MIN_VERSION = "2.0.0"
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 

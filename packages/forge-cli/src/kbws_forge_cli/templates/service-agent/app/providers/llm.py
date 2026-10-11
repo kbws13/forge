@@ -13,4 +13,6 @@ def build_model(settings: Settings) -> ChatOpenAI:
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
         temperature=0,
+        stream_usage=True,
+        max_retries=0,
     )

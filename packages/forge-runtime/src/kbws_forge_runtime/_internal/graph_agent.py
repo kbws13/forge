@@ -3,12 +3,15 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import AsyncIterator
+from contextlib import aclosing
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
+from pydantic import ValidationError
 
+from kbws_forge_runtime.errors import StructuredOutputError
 from kbws_forge_runtime.execution import (
     RunContext,
     default_usage_resolver,
@@ -119,7 +122,7 @@ class GraphAgent:
             },
         }
         final_values: dict[str, Any] | None = None
-        input_state = {"messages": [to_langchain_message(message)]}
+        input_state = {"messages": [to_langchain_message(message)], "parsed": None}
         action_started_at: dict[str, float] = {}
 
         def event_fields() -> dict[str, Any]:
@@ -139,103 +142,106 @@ class GraphAgent:
                 return None
             return (monotonic() - started_at) * 1000
 
-        async for event in self.graph.astream_events(input_state, config=config, version="v2"):
-            event_name = event.get("event")
-            data = event.get("data", {})
+        async with aclosing(
+            self.graph.astream_events(input_state, config=config, version="v2")
+        ) as graph_events:
+            async for event in graph_events:
+                event_name = event.get("event")
+                data = event.get("data", {})
 
-            def common_fields() -> dict[str, Any]:
-                return {
-                    "run_id": run_id,
-                    "agent_id": self.info.agent_id,
-                    "session_id": session_id,
-                    **event_fields(),
-                }
+                def common_fields() -> dict[str, Any]:
+                    return {
+                        "run_id": run_id,
+                        "agent_id": self.info.agent_id,
+                        "session_id": session_id,
+                        **event_fields(),
+                    }
 
-            if event_name == "on_chat_model_start":
-                fields = action_fields(event)
-                action_started_at[fields["call_id"]] = monotonic()
-                yield ModelStarted(
-                    **common_fields(),
-                    **fields,
-                    model_name=event.get("name"),
-                )
-            elif event_name == "on_chat_model_stream":
-                text = _text_from_content(getattr(data.get("chunk"), "content", ""))
-                if text:
-                    yield TextDelta(
+                if event_name == "on_chat_model_start":
+                    fields = action_fields(event)
+                    action_started_at[fields["call_id"]] = monotonic()
+                    yield ModelStarted(
                         **common_fields(),
-                        text=text,
-                        node_name=event.get("metadata", {}).get("langgraph_node"),
+                        **fields,
+                        model_name=event.get("name"),
                     )
-            elif event_name == "on_chat_model_end":
-                fields = action_fields(event)
-                output = data.get("output")
-                usage_resolver = (
-                    run_context.usage_resolver
-                    if run_context is not None
-                    else default_usage_resolver
-                )
-                usage = usage_resolver(output)
-                yield ModelFinished(
-                    **common_fields(),
-                    **fields,
-                    model_name=event.get("name"),
-                    duration_ms=duration_ms(fields["call_id"]),
-                    usage=usage,
-                    tool_calls=tuple(getattr(output, "tool_calls", ()) or ()),
-                )
-            elif event_name == "on_chat_model_error":
-                fields = action_fields(event)
-                yield ModelFailed(
-                    **common_fields(),
-                    **fields,
-                    model_name=event.get("name"),
-                    duration_ms=duration_ms(fields["call_id"]),
-                    error_message=str(data.get("error", "model call failed")),
-                )
-            elif event_name == "on_tool_start":
-                fields = action_fields(event)
-                action_started_at[fields["call_id"]] = monotonic()
-                yield ToolStarted(
-                    **common_fields(),
-                    tool_name=event.get("name", "tool"),
-                    tool_input=data.get("input"),
-                    call_id=fields["call_id"],
-                    node_name=fields["node_name"],
-                    parent_ids=fields["parent_ids"],
-                )
-            elif event_name == "on_tool_end":
-                fields = action_fields(event)
-                output = data.get("output")
-                content = getattr(output, "content", None)
-                if content is not None:
-                    output = content
-                if not isinstance(output, str):
-                    output = json.dumps(output, ensure_ascii=False, default=str)
-                yield ToolFinished(
-                    **common_fields(),
-                    tool_name=event.get("name", "tool"),
-                    tool_output=output,
-                    call_id=fields["call_id"],
-                    node_name=fields["node_name"],
-                    parent_ids=fields["parent_ids"],
-                    duration_ms=duration_ms(fields["call_id"]),
-                )
-            elif event_name == "on_tool_error":
-                fields = action_fields(event)
-                yield ToolFailed(
-                    **common_fields(),
-                    tool_name=event.get("name", "tool"),
-                    error_message=str(data.get("error", "tool call failed")),
-                    call_id=fields["call_id"],
-                    node_name=fields["node_name"],
-                    parent_ids=fields["parent_ids"],
-                    duration_ms=duration_ms(fields["call_id"]),
-                )
-            elif event_name == "on_chain_end" and not event.get("parent_ids"):
-                output = data.get("output")
-                if isinstance(output, dict) and "messages" in output:
-                    final_values = output
+                elif event_name == "on_chat_model_stream":
+                    text = _text_from_content(getattr(data.get("chunk"), "content", ""))
+                    if text:
+                        yield TextDelta(
+                            **common_fields(),
+                            text=text,
+                            node_name=event.get("metadata", {}).get("langgraph_node"),
+                        )
+                elif event_name == "on_chat_model_end":
+                    fields = action_fields(event)
+                    output = data.get("output")
+                    usage_resolver = (
+                        run_context.usage_resolver
+                        if run_context is not None
+                        else default_usage_resolver
+                    )
+                    usage = usage_resolver(output)
+                    yield ModelFinished(
+                        **common_fields(),
+                        **fields,
+                        model_name=event.get("name"),
+                        duration_ms=duration_ms(fields["call_id"]),
+                        usage=usage,
+                        tool_calls=tuple(getattr(output, "tool_calls", ()) or ()),
+                    )
+                elif event_name == "on_chat_model_error":
+                    fields = action_fields(event)
+                    yield ModelFailed(
+                        **common_fields(),
+                        **fields,
+                        model_name=event.get("name"),
+                        duration_ms=duration_ms(fields["call_id"]),
+                        error_message=str(data.get("error", "model call failed")),
+                    )
+                elif event_name == "on_tool_start":
+                    fields = action_fields(event)
+                    action_started_at[fields["call_id"]] = monotonic()
+                    yield ToolStarted(
+                        **common_fields(),
+                        tool_name=event.get("name", "tool"),
+                        tool_input=data.get("input"),
+                        call_id=fields["call_id"],
+                        node_name=fields["node_name"],
+                        parent_ids=fields["parent_ids"],
+                    )
+                elif event_name == "on_tool_end":
+                    fields = action_fields(event)
+                    output = data.get("output")
+                    content = getattr(output, "content", None)
+                    if content is not None:
+                        output = content
+                    if not isinstance(output, str):
+                        output = json.dumps(output, ensure_ascii=False, default=str)
+                    yield ToolFinished(
+                        **common_fields(),
+                        tool_name=event.get("name", "tool"),
+                        tool_output=output,
+                        call_id=fields["call_id"],
+                        node_name=fields["node_name"],
+                        parent_ids=fields["parent_ids"],
+                        duration_ms=duration_ms(fields["call_id"]),
+                    )
+                elif event_name == "on_tool_error":
+                    fields = action_fields(event)
+                    yield ToolFailed(
+                        **common_fields(),
+                        tool_name=event.get("name", "tool"),
+                        error_message=str(data.get("error", "tool call failed")),
+                        call_id=fields["call_id"],
+                        node_name=fields["node_name"],
+                        parent_ids=fields["parent_ids"],
+                        duration_ms=duration_ms(fields["call_id"]),
+                    )
+                elif event_name == "on_chain_end" and not event.get("parent_ids"):
+                    output = data.get("output")
+                    if isinstance(output, dict) and "messages" in output:
+                        final_values = output
 
         # 最终状态以 aget_state 为准（on_chain_end 的 output 可能不含 parsed 等字段）
         final_state = dict((await self.graph.aget_state(config)).values)
@@ -247,6 +253,15 @@ class GraphAgent:
             raise RuntimeError("graph finished without an assistant message")
 
         final_message = ChatMessage.assistant(_text_from_content(message_value.content))
+        parsed = final_state.get("parsed")
+        schema = getattr(self.graph, "forge_output_schema", None)
+        if schema is not None:
+            if parsed is None:
+                raise StructuredOutputError("Graph finished without valid structured output")
+            try:
+                parsed = schema.model_validate(parsed)
+            except ValidationError as exc:
+                raise StructuredOutputError(f"Invalid structured output: {exc}") from exc
         yield MessageCreated(
             run_id=run_id,
             agent_id=self.info.agent_id,
@@ -254,13 +269,6 @@ class GraphAgent:
             **event_fields(),
             message=final_message,
         )
-        parsed = final_state.get("parsed")
-        schema = getattr(self.graph, "forge_output_schema", None)
-        if parsed is not None and schema is not None and not isinstance(parsed, schema):
-            try:
-                parsed = schema.model_validate(parsed)
-            except Exception:
-                pass  # 还原失败保持 dict，不阻断结果
         yield RunFinished(
             run_id=run_id,
             agent_id=self.info.agent_id,

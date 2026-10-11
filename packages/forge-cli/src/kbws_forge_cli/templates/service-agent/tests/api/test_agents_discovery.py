@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kbws_forge_runtime import AgentRuntime
 from kbws_forge_runtime.agent import load_agents
+
 from tests.conftest import BindableFakeChatModel
 
 

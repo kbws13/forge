@@ -57,15 +57,15 @@
 | `RUN_RETRY_BACKOFF_SECONDS` | `0` | 重试退避秒数 |
 | `DEEPSEEK_API_KEY` | 必填（填在 `.env`） | 模型供应商 key；integration 测试也读取它 |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | 模型 API 地址 |
-| `DEEPSEEK_MODEL` | `deepseek-chat` | 模型名 |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名 |
 
 ## 运行
 
 ```bash
 uv sync
-cp .env.example .env        # 填入 DEEPSEEK_API_KEY，并修改 API_KEY
-./scripts/run.sh            # 默认 dev，带热重载
-APP_ENV=prod ./scripts/run.sh
+# 复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY，并修改 API_KEY
+uv run uvicorn app.main:app --reload
+# Bash 环境也可使用 ./scripts/run.sh
 ```
 
 另开终端启动本地 Trace UI：
@@ -82,30 +82,22 @@ UI 只监听 `127.0.0.1`，加载后自动连接服务（连接设置保存在�
 
 每次运行（无论从哪个客户端发起：curl / Yaak / Trace UI）都会被服务端记录到 `logs/traces.json`，可通过 `GET /api/v1/traces` 查询——`forge trace` 的 Trace 面板展示的就是这份全量记录，可查看所有来源的执行流程。
 
-### 评估（Eval）
+### Trace 与用量边界
 
-`evals/` 目录里的 Python 文件即评估套件（代码优先，同 `agents/` 模式）：每个文件导出 `suite` 或 `suites`（`EvalSuite`），启动时自动发现。运行会真实调用模型（受 suite 内 `RunPolicy` 的并发/超时/预算限制）：
+本模板由 Forge CLI 2.0 生成，依赖 `kbws-forge-runtime>=2.0.0,<3`。
+Forge 2.0 不包含 Eval 引擎、接口、命令或界面；常规工程测试仍然保留。
+项目管理、人工审核、设备队列和业务验收逻辑由应用实现。
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/evals/smoke/run      # 运行 smoke 套件
-curl http://127.0.0.1:8000/api/v1/evals                        # 已发现的套件
-curl http://127.0.0.1:8000/api/v1/evals/runs                   # 评估历史
-curl http://127.0.0.1:8000/api/v1/traces/<run_id>/eval         # 某次运行对应的评估
-```
+Trace 默认逐事件原子替换 `logs/traces.json`，历史记录有数量上限。
+只支持单进程写入，请使用一个 worker，不让多个服务进程共享该文件。
+重启后未完成的运行标为 `interrupted`，不会自动恢复或重放任务；
+Trace 持久化不等于会话内存持久化。原子替换不是 `fsync` 持久性保证，
+断电、磁盘故障和写入错误可能导致记录丢失。
 
-确定性 grader（`exact / contains / regex / json_schema / tool_trajectory`）开箱即用；`llm_judge(model_factory, rubric)` 可选。结果持久化到 `logs/evals/`，与 `run_id` 关联——Trace 面板可直接看到每条 run 的得分与失败原因。
-
-### CLI 与 CI 门禁
-
-```bash
-forge eval run smoke --fail-under 0.9 --report junit -o out/     # 跑套件 + 门禁 + JUnit 报告
-forge eval run smoke --mode replay                               # 重打分已记录的 run（零外部调用）
-forge eval compare --baseline <eval_run_id> --live               # 基线 vs 本次改动，输出回归清单
-forge eval dataset export smoke -o cases.jsonl                   # 数据集导出（JSONL）
-forge eval dataset import cases.jsonl --name golden --agent {{ spec.module_name }}   # 导入生成 evals/golden.py
-```
-
-`--fail-under` 不达标时退出码非 0，可直接接入 CI；JUnit 报告兼容主流 CI 解析。
+用量区分已知、未知和部分已知：未知不是零，部分用量不是完整消耗。
+模型客户端请求流式 usage，但是否返回仍取决于供应商，必须实测。
+Forge 不维护价格表，也不根据 token 数推算费用；已有费用预算仅使用明确提供的费用元数据。
+输入、输出和工具参数可能包含应用数据，应按项目需要限制 Trace 访问与保留期限。
 
 ## 测试
 
@@ -133,7 +125,8 @@ RUN_REAL_PROVIDER_TESTS=1 uv run pytest tests/integration   # 真实 DeepSeek（
 
 核心约定：**一个 agent 的所有业务代码内聚在自己的目录**，框架层（app/）只提供横切能力——新增 agent 时不要动 app/ 下的代码。
 
-## 常见问题
+## 验证范围
 
-- **评估会不会影响线上业务调用？** 不会。启动时的"自动发现"只是把 `evals/` 下的套件定义注册到内存（不执行、不挂中间件、不拦截请求）；业务链路（`/chat`、`/chat_stream`）完全不经过评估代码。评估只在显式触发时运行（`POST /api/v1/evals/{suite_id}/run` 需 API Key，或 `forge eval run`），并使用独立的 `eval_user` 与新建会话，不触碰业务会话。业务调用即使与断言对不上也不会有任何报错——评估是观测/测试层，不是执行路径的一部分。
-- **生产环境不想要评估？** 不部署 `evals/` 目录即可（缺失目录 = 无套件，服务正常启动）；评估结果写入 `logs/evals/`，可随时清空或整体移除。
+默认测试使用 fake model，不代表已验证真实 DeepSeek 模型的工具调用、结构化输出或 usage。
+模型名称和 API 地址应按实际供应商账户配置，不应仅凭模型别名推断兼容性。
+发布前按需单独验证真实供应商，并在浏览器中检查 Trace UI；自动测试通过不等于视觉验收。

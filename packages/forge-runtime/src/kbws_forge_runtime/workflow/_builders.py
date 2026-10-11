@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.prompts import BaseChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_core.utils.function_calling import convert_to_openai_function
@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, ValidationError
 
+from kbws_forge_runtime.errors import StructuredOutputError
 from kbws_forge_runtime.execution import ModelExecutor, ToolExecutor, current_run_context
 from kbws_forge_runtime.middleware import ModelMiddleware
 from kbws_forge_runtime.prompts import Prompt, render_instruction
@@ -224,42 +225,62 @@ def build_chat_graph(
         )
 
         response = await invoke_model(state, prompt)
-        return {"messages": [response]}
+        return {"messages": [response], "parsed": None}
 
     async def finalize(state: WorkflowState) -> dict[str, Any]:
-        """Parse the structured-output tool call into the schema (one retry)."""
+        """Close tool calls before validation can fail or request one retry."""
         assert output_schema is not None
         last = state.get("messages", [])[-1] if state.get("messages") else None
-        args: dict[str, Any] | None = None
-        if isinstance(last, AIMessage) and last.tool_calls:
-            for tc in last.tool_calls:
-                if tc.get("name") == _OUTPUT_TOOL_NAME:
-                    args = tc.get("args", {})
-                    break
-        if args is None:
-            return {}
-        try:
-            # 存 dict：pydantic 实例进 checkpointer 后无法可靠反序列化
-            return {"parsed": output_schema.model_validate(args).model_dump()}
-        except ValidationError:
-            pass
-        # 重试一次：把错误回注，让模型重新输出
-        retry_prompt = [
-            SystemMessage(
-                content=(
-                    f"你上一次的结构化输出无法解析，请修正后重新调用 "
-                    f"{_OUTPUT_TOOL_NAME} 工具。解析错误：{args}"
+        invalid_calls = list(last.invalid_tool_calls) if isinstance(last, AIMessage) else []
+        calls = [*last.tool_calls, *invalid_calls] if isinstance(last, AIMessage) else []
+        parsed = None
+        error = "Structured output requires exactly one output tool call, without other tools."
+        if not invalid_calls and len(calls) == 1 and calls[0]["name"] == _OUTPUT_TOOL_NAME:
+            try:
+                # Store a dict so checkpoint serializers need not reconstruct user schemas.
+                parsed = output_schema.model_validate(calls[0].get("args", {})).model_dump()
+            except ValidationError as exc:
+                error = (
+                    f"Invalid structured output: {exc}. Correct the arguments and call "
+                    f"{_OUTPUT_TOOL_NAME} again."
                 )
-            ),
-            last,
+        replies = [
+            ToolMessage(
+                content="Structured output accepted." if parsed is not None else error,
+                tool_call_id=call["id"],
+                name=call["name"],
+                status="success" if parsed is not None else "error",
+            )
+            for call in calls
         ]
-        retry = await invoke_model(state, retry_prompt)
-        for tc in getattr(retry, "tool_calls", []) or []:
-            if tc.get("name") == _OUTPUT_TOOL_NAME:
-                try:
-                    return {"parsed": output_schema.model_validate(tc.get("args", {})).model_dump()}
-                except ValidationError:
-                    pass
+        return {"parsed": parsed, "messages": replies}
+
+    def after_finalize(state: WorkflowState) -> str:
+        if state.get("parsed") is None:
+            last_ai = next(
+                (
+                    message
+                    for message in reversed(state.get("messages", []))
+                    if isinstance(message, AIMessage)
+                ),
+                None,
+            )
+            if (
+                last_ai is not None
+                and not last_ai.invalid_tool_calls
+                and len(last_ai.tool_calls) == 1
+                and last_ai.tool_calls[0]["name"] == _OUTPUT_TOOL_NAME
+            ):
+                return "retry_output"
+        return "validate_output"
+
+    async def validate_output(state: WorkflowState) -> dict[str, Any]:
+        if state.get("parsed") is None:
+            last = state.get("messages", [])[-1] if state.get("messages") else None
+            detail = (
+                last.content if isinstance(last, ToolMessage) else "No output tool call returned."
+            )
+            raise StructuredOutputError(f"No valid structured output: {detail}")
         return {}
 
     builder.add_node("chat", cast(Any, chat_node))
@@ -284,10 +305,16 @@ def build_chat_graph(
 
         def route(state: WorkflowState) -> str:
             last = state.get("messages", [])[-1] if state.get("messages") else None
+            if (
+                output_schema is not None
+                and isinstance(last, AIMessage)
+                and last.invalid_tool_calls
+            ):
+                return "finalize"
             if isinstance(last, AIMessage) and last.tool_calls:
                 names = {tc.get("name") for tc in last.tool_calls}
-                # 只请求结构化输出 -> 直接收尾；请求了真实工具 -> 进工具节点
-                if output_tool is not None and names and names <= {_OUTPUT_TOOL_NAME}:
+                # A terminal output cannot be accepted alongside executable tool calls.
+                if output_tool is not None and _OUTPUT_TOOL_NAME in names:
                     return "finalize" if output_schema is not None else END
                 if tools:
                     return "tools"
@@ -295,7 +322,15 @@ def build_chat_graph(
 
         if output_schema is not None:
             builder.add_node("finalize", cast(Any, finalize))
-            builder.add_edge("finalize", END)
+            builder.add_node("retry_output", cast(Any, chat_node))
+            builder.add_node("finalize_retry", cast(Any, finalize))
+            builder.add_node("validate_output", cast(Any, validate_output))
+            builder.add_conditional_edges(
+                "finalize", after_finalize, ["retry_output", "validate_output"]
+            )
+            builder.add_edge("retry_output", "finalize_retry")
+            builder.add_edge("finalize_retry", "validate_output")
+            builder.add_edge("validate_output", END)
             builder.add_conditional_edges("chat", route, ["finalize", "tools"])
         else:
             builder.add_conditional_edges("chat", route, [END, "tools"])

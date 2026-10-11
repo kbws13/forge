@@ -16,10 +16,7 @@ const state = {
   activeEventId: null,
   inspectorTab: "turns",
   filter: "",
-  viewMode: "trace",
-  evalRuns: [],
-  activeEvalRunId: null,
-  activeEvalCaseId: null,  connected: false,
+  connected: false,
   connecting: false,
   loadingRunId: null,
   autoSelected: false,
@@ -38,8 +35,6 @@ const elements = {
   refreshHistory: document.querySelector("#refresh-history"),
   clearHistory: document.querySelector("#clear-history"),
   themeToggle: document.querySelector("#theme-toggle"),
-  viewTrace: document.querySelector("#view-trace"),
-  viewEvals: document.querySelector("#view-evals"),
   sessionFilter: document.querySelector("#session-filter"),
   historyList: document.querySelector("#history-list"),
   historyCount: document.querySelector("#history-count"),
@@ -94,8 +89,6 @@ function bindEvents() {
   elements.themeToggle.addEventListener("click", () => {
     applyTheme(currentTheme() === "dark" ? "light" : "dark");
   });
-  elements.viewTrace.addEventListener("click", () => setViewMode("trace"));
-  elements.viewEvals.addEventListener("click", () => setViewMode("evals"));
   elements.sessionFilter.addEventListener("input", () => {
     state.filter = elements.sessionFilter.value.trim().toLowerCase();
     renderHistory();
@@ -141,7 +134,7 @@ async function connectToApi(event) {
     elements.connectBar.hidden = true;
     saveSettings();
     scheduleAutoRefresh();
-    await Promise.all([loadServiceTraces(), loadEvalRuns()]);
+    await loadServiceTraces();
     setStatus("connected", `${state.agents.length} agent${state.agents.length === 1 ? "" : "s"}`);
   } catch (error) {
     state.connected = false;
@@ -173,7 +166,6 @@ function scheduleAutoRefresh() {
   state.refreshTimer = setInterval(() => {
     if (state.connected) {
       loadServiceTraces();
-      loadEvalRuns();
     }
   }, REFRESH_MS);
 }
@@ -220,8 +212,8 @@ async function loadServiceTraces() {
         const existing = findRun(run.run_id);
         if (existing && existing.events.length > 0) {
           record.events = existing.events;
+          record.detail_status = existing.detail_status;
           record.response_text = existing.response_text;
-          record.evalResults = existing.evalResults;
           if (existing.summary) {
             record.summary = existing.summary;
           }
@@ -243,6 +235,10 @@ async function loadServiceTraces() {
       const group = groups.find((g) => g.key === state.activeSessionKey) || groups[0];
       selectSession(group.key, false);
     }
+    const active = findRun(state.activeRunId);
+    if (active && needsRunDetail(active)) {
+      await fetchRunDetail(active.run_id, true);
+    }
   } catch (error) {
     if (state.connected) {
       elements.connectionStatus.title = readableConnectionError(error);
@@ -251,24 +247,18 @@ async function loadServiceTraces() {
   renderAll();
 }
 
-async function fetchRunDetail(runId) {
+async function fetchRunDetail(runId, refresh = false) {
   const run = findRun(runId);
-  if (!run || run.events.length > 0) {
+  if (!run || state.loadingRunId === runId || (!refresh && !needsRunDetail(run))) {
     return;
   }
   state.loadingRunId = runId;
   renderAll();
   try {
-    const [detailResponse, evalResponse] = await Promise.all([
-      fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}`, {
-        headers: authHeaders(),
-        cache: "no-store",
-      }),
-      fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}/eval`, {
-        headers: authHeaders(),
-        cache: "no-store",
-      }),
-    ]);
+    const detailResponse = await fetch(`${state.apiUrl}/traces/${encodeURIComponent(runId)}`, {
+      headers: authHeaders(),
+      cache: "no-store",
+    });
     if (!detailResponse.ok) {
       throw new Error(await responseError(detailResponse));
     }
@@ -279,15 +269,9 @@ async function fetchRunDetail(runId) {
     }
     const merged = normalizeRunRecord(full);
     merged.events = full.events;
+    merged.detail_status = merged.status;
     merged.response_text = messageText(full.message) || run.response_text || "";
-    if (evalResponse.ok) {
-      const evalPayload = await evalResponse.json();
-      const results = Array.isArray(evalPayload) ? evalPayload : evalPayload.data;
-      if (Array.isArray(results)) {
-        merged.evalResults = results;
-      }
-    }
-    const index = state.runs.indexOf(run);
+    const index = state.runs.findIndex((item) => item.run_id === runId);
     if (index !== -1) {
       state.runs[index] = merged;
     }
@@ -427,220 +411,16 @@ function shortenId(value) {
 // --- 渲染 ---
 
 function renderAll() {
-  if (state.viewMode === "evals") {
-    renderEvalsView();
-  } else {
-    renderHistory();
-    renderRunView();
-    renderInspector();
-  }
+  renderHistory();
+  renderRunView();
+  renderInspector();
   renderTopbar();
-}
-
-function setViewMode(mode) {
-  state.viewMode = mode;
-  if (mode === "evals" && state.evalRuns.length === 0 && state.connected) {
-    loadEvalRuns();
-  }
-  renderAll();
-}
-
-async function loadEvalRuns() {
-  if (!state.connected || state.agents.length === 0) {
-    return;
-  }
-  try {
-    const response = await fetch(`${state.apiUrl}/evals/runs?limit=100`, {
-      headers: authHeaders(),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return;
-    }
-    const payload = await response.json();
-    const runs = Array.isArray(payload) ? payload : payload.data;
-    if (Array.isArray(runs)) {
-      state.evalRuns = runs;
-    }
-  } catch {
-    /* ignore */
-  }
-  renderAll();
-}
-
-async function fetchEvalRunDetail(evalRunId) {
-  try {
-    const response = await fetch(`${state.apiUrl}/evals/runs/${encodeURIComponent(evalRunId)}`, {
-      headers: authHeaders(),
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await response.json();
-    const run = Array.isArray(payload) ? payload : payload.data;
-    if (run && Array.isArray(run.cases)) {
-      const index = state.evalRuns.findIndex((item) => item.eval_run_id === evalRunId);
-      if (index !== -1) {
-        state.evalRuns[index] = run;
-      }
-    }
-    return run;
-  } catch {
-    return null;
-  }
-}
-
-function renderEvalsView() {
-  renderEvalRunsList();
-  renderEvalRunDetail();
-  renderEvalMeta();
-}
-
-function renderEvalRunsList() {
-  elements.historyList.replaceChildren();
-  elements.historyCount.textContent = `${state.evalRuns.length} ${state.evalRuns.length === 1 ? "eval run" : "eval runs"}`;
-  if (!state.connected) {
-    elements.historyList.append(make("p", "empty compact", "Connect to see eval runs"));
-    return;
-  }
-  if (state.evalRuns.length === 0) {
-    elements.historyList.append(make("p", "empty compact", "No eval runs yet"));
-    return;
-  }
-  for (const run of state.evalRuns) {
-    const item = make("div", `session-item${run.eval_run_id === state.activeEvalRunId ? " current" : ""}`);
-    const select = make("button", "session-select");
-    select.type = "button";
-    select.addEventListener("click", () => selectEvalRun(run.eval_run_id));
-    const totals = run.totals || {};
-    const name = make("span", "session-name", run.suite_id || run.eval_run_id);
-    name.title = `eval run ${run.eval_run_id}`;
-    const meta = make("span", "session-meta");
-    meta.append(
-      make("span", "session-date", formatDate(run.completed_at || run.started_at)),
-      make("span", "session-count", `${totals.passed ?? "–"}/${totals.total ?? "–"}`),
-    );
-    select.append(name, meta);
-    item.append(select);
-    elements.historyList.append(item);
-  }
-}
-
-async function selectEvalRun(evalRunId) {
-  state.activeEvalRunId = evalRunId;
-  state.activeEvalCaseId = null;
-  renderAll();
-  const cached = state.evalRuns.find((run) => run.eval_run_id === evalRunId);
-  if (!cached || !Array.isArray(cached.cases)) {
-    await fetchEvalRunDetail(evalRunId);
-    renderAll();
-  }
-}
-
-function renderEvalRunDetail() {
-  elements.runView.replaceChildren();
-  const run = state.evalRuns.find((item) => item.eval_run_id === state.activeEvalRunId);
-  if (!run) {
-    elements.runView.append(emptyState("No eval run selected", "Select an eval run from the left."));
-    return;
-  }
-  const cases = run.cases || [];
-  const totals = run.totals || {};
-  const summary = make("div", "invocation-wrap");
-  const header = make("div", "invocation-header");
-  header.append(
-    make("span", "invocation-caption", "Suite"),
-    make("span", "invocation-id", run.suite_id || "?"),
-    make("span", "total-latency", `${totals.passed ?? 0}/${totals.total ?? 0} passed · avg ${run.average_score != null ? run.average_score.toFixed(2) : "–"}`),
-  );
-  summary.append(header);
-  const stats = make("div", "invocation-stats");
-  stats.append(
-    stat("Mode", run.provenance?.mode || "?"),
-    stat("Model", run.provenance?.model || "?"),
-    stat("Cases", String(cases.length)),
-    stat("Fingerprint", String(run.provenance?.suite_fingerprint || "").slice(0, 8)),
-  );
-  summary.append(stats);
-  elements.runView.append(summary);
-
-  if (cases.length === 0) {
-    elements.runView.append(make("p", "empty compact", "No cases in this run"));
-    return;
-  }
-  const list = make("div", "eval-cases-table");
-  for (const caseResult of cases) {
-    const row = make("button", `eval-case-row${caseResult.case_id === state.activeEvalCaseId ? " selected" : ""}`);
-    row.type = "button";
-    const runId = caseResult.run_ids?.[0];
-    row.title = runId ? `Open run ${runId} in the Trace view` : caseResult.case_id;
-    row.addEventListener("click", () => {
-      if (runId) {
-        state.activeRunId = runId;
-        state.activeSessionKey = null;
-        state.viewMode = "trace";
-        renderAll();
-        selectRun(runId);
-      } else {
-        state.activeEvalCaseId = caseResult.case_id;
-        renderAll();
-      }
-    });
-    const status = caseResult.status || "not_evaluated";
-    row.append(
-      make("span", `status-dot ${status}`),
-      make("span", "eval-case-row-id", caseResult.case_id),
-      make("span", "eval-case-row-score", caseResult.score != null ? caseResult.score.toFixed(2) : "–"),
-    );
-    list.append(row);
-  }
-  elements.runView.append(list);
-}
-
-function renderEvalMeta() {
-  elements.inspectorContent.replaceChildren();
-  const run = state.evalRuns.find((item) => item.eval_run_id === state.activeEvalRunId);
-  if (!run) {
-    elements.inspectorContent.append(make("p", "empty compact", "No eval run selected"));
-    return;
-  }
-  const list = make("dl", "detail-list");
-  const pairs = [
-    ["eval_run_id", run.eval_run_id],
-    ["suite_id", run.suite_id],
-    ["status", run.status],
-    ["mode", run.provenance?.mode],
-    ["model", run.provenance?.model],
-    ["git_sha", run.provenance?.git_sha],
-    ["fingerprint", run.provenance?.suite_fingerprint],
-    ["started_at", run.started_at],
-    ["completed_at", run.completed_at],
-  ];
-  for (const [label, value] of pairs) {
-    if (value === null || value === undefined || value === "") {
-      continue;
-    }
-    const row = make("div", "detail-row");
-    row.append(make("dt", "", label), make("dd", "", displayValue(value)));
-    list.append(row);
-  }
-  elements.inspectorContent.append(list);
-  elements.inspectorContent.append(make("pre", "json-view", JSON.stringify(run, null, 2)));
 }
 
 function renderTopbar() {
   elements.refreshHistory.disabled = !state.connected;
   elements.clearHistory.disabled = state.runs.length === 0;
   elements.sessionFilter.disabled = !state.connected;
-  const traceActive = state.viewMode === "trace";
-  elements.viewTrace.classList.toggle("active", traceActive);
-  elements.viewEvals.classList.toggle("active", !traceActive);
-  elements.viewTrace.setAttribute("aria-selected", String(traceActive));
-  elements.viewEvals.setAttribute("aria-selected", String(!traceActive));
-  if (state.viewMode === "evals") {
-    elements.clearHistory.disabled = true;
-  }
 }
 
 function renderHistory() {
@@ -713,7 +493,7 @@ function selectSession(key, focusRun) {
   }
   renderAll();
   const run = findRun(state.activeRunId);
-  if (run && run.events.length === 0 && state.connected) {
+  if (run && needsRunDetail(run) && state.connected) {
     fetchRunDetail(run.run_id);
   }
 }
@@ -727,7 +507,7 @@ async function selectRun(runId) {
   state.activeSessionKey = sessionKeyOf(run);
   state.activeEventId = displayEvents(run.events).at(-1)?.event_id || null;
   renderAll();
-  if (run.events.length === 0 && state.connected) {
+  if (needsRunDetail(run) && state.connected) {
     await fetchRunDetail(runId);
     renderAll();
   }
@@ -792,12 +572,12 @@ function renderInvocation(run, items) {
   stats.append(
     stat("Models", String(modelCalls)),
     stat("Tools", String(toolCalls)),
-    stat("Tokens", formatNumber(usage.total_tokens ?? 0)),
+    stat("Tokens", formatUsage(usage)),
+    stat("Status", run.status),
     stat("Events", String(run.events.length)),
   );
-  const badge = evalBadge(run);
-  if (badge) {
-    stats.append(stat("Eval", badge.label));
+  if (run.events_dropped > 0) {
+    stats.append(stat("Events dropped", formatNumber(run.events_dropped)));
   }
   wrap.append(stats);
   return wrap;
@@ -963,10 +743,6 @@ function renderInspector() {
     elements.inspectorContent.append(renderTurns());
     return;
   }
-  if (state.inspectorTab === "eval") {
-    elements.inspectorContent.append(renderEval());
-    return;
-  }
 
   if (!run) {
     elements.inspectorContent.append(make("p", "empty compact", "No run selected"));
@@ -1001,13 +777,6 @@ function renderTurns() {
       make("span", `status-dot ${run.status}`),
       make("span", "turn-prompt", run.prompt || "Untitled run"),
     );
-    const badge = evalBadge(run);
-    if (badge) {
-      const chip = make("span", `eval-badge ${badge.status}`);
-      chip.textContent = badge.label;
-      chip.title = `Eval ${badge.score != null ? badge.score.toFixed(2) : "–"} (${badge.passed}/${badge.total})`;
-      line1.append(chip);
-    }
     line1.append(make("span", "turn-time", formatClock(run.started_at)));
     card.append(line1);
     if (run.response_text) {
@@ -1016,26 +785,6 @@ function renderTurns() {
     list.append(card);
   }
   return list;
-}
-
-function evalBadge(run) {
-  const results = run.evalResults;
-  if (!Array.isArray(results) || results.length === 0) {
-    return null;
-  }
-  const statuses = results.map((result) => result.status);
-  let status = "passed";
-  if (statuses.includes("failed")) {
-    status = "failed";
-  } else if (statuses.includes("not_evaluated")) {
-    status = "not_evaluated";
-  }
-  const passed = results.filter((result) => result.status === "passed").length;
-  const scored = results.filter((result) => typeof result.score === "number");
-  const score = scored.length
-    ? scored.reduce((sum, result) => sum + result.score, 0) / scored.length
-    : null;
-  return { status, label: `${passed}/${results.length}`, score, passed, total: results.length };
 }
 
 function detailView(event) {
@@ -1047,42 +796,6 @@ function detailView(event) {
     const row = make("div", "detail-row");
     row.append(make("dt", "", label), make("dd", "", displayValue(value)));
     list.append(row);
-  }
-  return list;
-}
-
-function renderEval() {
-  const run = findRun(state.activeRunId);
-  if (!run) {
-    return make("p", "empty compact", "Select a run to see its eval results");
-  }
-  const results = run.evalResults;
-  if (!Array.isArray(results) || results.length === 0) {
-    return make("p", "empty compact", "No eval results for this run");
-  }
-  const list = make("div", "eval-results");
-  for (const result of results) {
-    const card = make("div", "eval-case");
-    const head = make("div", "eval-case-head");
-    head.append(
-      make("span", `status-dot ${result.status}`),
-      make("span", "eval-case-id", result.case_id),
-      make("span", "eval-case-score", result.score != null ? result.score.toFixed(2) : "–"),
-    );
-    card.append(head);
-    for (const reason of result.failure_reasons || []) {
-      card.append(make("div", "eval-reason", reason));
-    }
-    for (const grader of result.graders || []) {
-      const row = make("div", "eval-grader");
-      row.append(
-        make("span", "eval-grader-key", grader.key),
-        make("span", `eval-grader-status ${grader.status}`, grader.status),
-        make("span", "eval-grader-reason", grader.reason || ""),
-      );
-      card.append(row);
-    }
-    list.append(card);
   }
   return list;
 }
@@ -1156,6 +869,7 @@ function eventTitle(event) {
     run_finished: "Run completed",
     run_failed: "Run failed",
     run_cancelled: "Run cancelled",
+    run_interrupted: "Run interrupted",
   };
   return labels[event.type] || event.type || "Event";
 }
@@ -1259,17 +973,22 @@ function normalizeRunRecord(run) {
     duration_ms: run.duration_ms ?? null,
     model_calls: run.model_calls ?? 0,
     tool_calls: run.tool_calls ?? 0,
+    events_dropped: run.events_dropped ?? 0,
     usage: run.usage || {},
     response_text: "",
-    interruption_reason: null,
+    interruption_reason: run.interruption_reason || null,
     summary: null,
     events: [],
-    evalResults: null,
+    detail_status: null,
   };
 }
 
 function findRun(runId) {
   return runId ? state.runs.find((run) => run.run_id === runId) : null;
+}
+
+function needsRunDetail(run) {
+  return run.events.length === 0 || run.status === "running" || run.detail_status !== run.status;
 }
 
 function runDuration(run) {
@@ -1339,6 +1058,14 @@ function formatDate(value) {
   return sameDay
     ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatUsage(usage) {
+  if (!usage || !["complete", "partial"].includes(usage.completeness)) {
+    return "Unknown";
+  }
+  const total = formatNumber(usage.total_tokens);
+  return usage.completeness === "partial" ? `${total} (partial)` : total;
 }
 
 function formatNumber(value) {

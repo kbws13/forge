@@ -11,7 +11,7 @@ class ProviderSettings(BaseSettings):
 
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-flash"
     run_real_provider_tests: bool = False
 
 
@@ -36,7 +36,8 @@ def real_model_factory(
             model=model or provider_settings.deepseek_model,
             temperature=0,
             max_tokens=max_tokens,
-            max_retries=1,
+            max_retries=0,
+            stream_usage=True,
             timeout=30,
         )
 

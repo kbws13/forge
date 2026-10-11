@@ -7,7 +7,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import StrEnum
 from time import monotonic
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -94,6 +94,7 @@ class ModelUsage(BaseModel):
     output_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
     cost_usd: float | None = Field(default=None, ge=0)
+    completeness: Literal["complete", "partial", "unknown"] = "complete"
 
 
 class ToolApprovalRequest(BaseModel):
@@ -122,18 +123,29 @@ def default_usage_resolver(response: Any) -> ModelUsage | None:
     if not isinstance(usage, dict):
         return None
 
-    input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-    output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-    total_tokens = int(usage.get("total_tokens") or input_tokens + output_tokens)
+    raw_input = usage.get("input_tokens", usage.get("prompt_tokens"))
+    raw_output = usage.get("output_tokens", usage.get("completion_tokens"))
+    raw_total = usage.get("total_tokens")
+    input_tokens = int(raw_input) if raw_input is not None else 0
+    output_tokens = int(raw_output) if raw_output is not None else 0
+    total_tokens = int(raw_total) if raw_total is not None else input_tokens + output_tokens
     raw_cost = usage.get("cost_usd", usage.get("cost"))
     cost_usd = float(raw_cost) if isinstance(raw_cost, int | float) else None
-    if total_tokens == 0 and cost_usd is None:
+    has_tokens = any(value is not None for value in (raw_input, raw_output, raw_total))
+    if not has_tokens and cost_usd is None:
         return None
     return ModelUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         cost_usd=cost_usd,
+        completeness=(
+            "complete"
+            if raw_input is not None and raw_output is not None
+            else "partial"
+            if has_tokens
+            else "unknown"
+        ),
     )
 
 
@@ -155,7 +167,9 @@ class RunContext:
     _output_tokens: int = field(default=0, init=False)
     _total_tokens: int = field(default=0, init=False)
     _cost_usd: float = field(default=0, init=False)
-    _has_cost: bool = field(default=False, init=False)
+    _cost_calls: int = field(default=0, init=False)
+    _known_usage_calls: int = field(default=0, init=False)
+    _partial_usage: bool = field(default=False, init=False)
     _sequence: int = field(default=0, init=False)
     _semaphore: asyncio.Semaphore | None = field(default=None, init=False)
 
@@ -177,7 +191,18 @@ class RunContext:
             input_tokens=self._input_tokens,
             output_tokens=self._output_tokens,
             total_tokens=self._total_tokens,
-            cost_usd=self._cost_usd if self._has_cost else None,
+            cost_usd=(
+                self._cost_usd
+                if self._cost_calls and self._cost_calls == self._model_calls
+                else None
+            ),
+            completeness=(
+                "complete"
+                if self._known_usage_calls == self._model_calls and not self._partial_usage
+                else "partial"
+                if self._known_usage_calls
+                else "unknown"
+            ),
         )
 
     @property
@@ -239,16 +264,22 @@ class RunContext:
         self._input_tokens += usage.input_tokens
         self._output_tokens += usage.output_tokens
         self._total_tokens += usage.total_tokens
+        if usage.completeness != "unknown":
+            self._known_usage_calls += 1
+        if usage.completeness != "complete":
+            self._partial_usage = True
         if usage.cost_usd is not None:
             self._cost_usd += usage.cost_usd
-            self._has_cost = True
+            self._cost_calls += 1
 
         token_limit = self.policy.max_total_tokens
+        if token_limit is not None and self.usage.completeness != "complete":
+            raise RunUsageUnavailableError("model response did not include complete token usage")
         if token_limit is not None and self._total_tokens > token_limit:
             raise RunBudgetExceededError(f"token budget exceeded: {token_limit}")
         cost_limit = self.policy.max_cost_usd
         if cost_limit is not None:
-            if usage.cost_usd is None:
+            if self.usage.cost_usd is None:
                 raise RunUsageUnavailableError(
                     "model response did not include cost required by the run policy"
                 )

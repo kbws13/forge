@@ -20,7 +20,7 @@ test.afterAll(async () => {
   await stub?.close();
 });
 
-test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async ({ page }) => {
+test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async ({ page }, testInfo) => {
   const consoleErrors = [];
   page.on("console", (m) => {
     if (m.type() === "error") consoleErrors.push(m.text());
@@ -66,17 +66,7 @@ test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async 
   expect(titles.join(" ")).toContain("Tool completed");
   expect(titles.join(" ")).toContain("Response stream");
 
-  // eval 徽章：foreign run 预置 1 过 1 挂
-  await expect(page.locator(".eval-badge")).toHaveCount(1);
-  await expect(page.locator(".eval-badge")).toHaveText("1/2");
-  await expect(page.locator(".eval-badge")).toHaveClass(/failed/);
-
-  // Eval tab：逐 case 得分 + 失败原因
-  await page.locator('[data-tab="eval"]').click();
-  await expect(page.locator(".eval-case")).toHaveCount(2);
-  await expect(page.locator(".eval-reason").first()).toContainText("tools not called");
-  await expect(page.locator(".eval-case-head").first()).toContainText("add_tool");
-  await page.locator('[data-tab="turns"]').click();
+  await expect(page.getByRole("tab", { name: "Eval", exact: true })).toHaveCount(0);
 
   // 模拟“另一个客户端”（node fetch，不经 UI）连发两条同会话 run
   for (const message of ["外部请求一", "外部请求二"]) {
@@ -139,22 +129,6 @@ test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async 
   await expect(page.locator(".timeline-event").first()).toBeVisible({ timeout: 10000 });
   await expect(page.locator(".turn-card").nth(9)).toHaveClass(/active/);
 
-  // Evals 视图：切换后显示评估历史 → 选中 → 逐 case 结果 → 点 case 跳进对应 run 的执行流
-  await page.locator("#view-evals").click();
-  await expect(page.locator("#view-evals")).toHaveClass(/active/);
-  await expect(page.locator(".session-item")).toHaveCount(1);
-  await page.locator(".session-select").first().click();
-  await expect(page.locator(".eval-case-row")).toHaveCount(2);
-  await expect(page.locator(".eval-case-row-score").first()).toHaveText("1.00");
-  await expect(page.locator(".invocation-header")).toContainText("1/2 passed");
-  // 点失败的 case → 跳回 Trace 视图并打开对应 run
-  await page.locator(".eval-case-row").nth(1).click();
-  await expect(page.locator("#view-trace")).toHaveClass(/active/);
-  await expect(page.locator(".timeline-event").first()).toBeVisible({ timeout: 10000 });
-  // 回到 Trace 视图后徽章仍在（run 的 eval 结果）
-  await expect(page.locator(".eval-badge").first()).toBeVisible();
-  await page.locator("#view-trace").click();
-
   // 刷新 → 依然自动连接，数据从服务端恢复
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.locator("#connection-status")).toHaveText(/1 agent/, { timeout: 10000 });
@@ -176,4 +150,75 @@ test("trace ui: ADK-style sessions, waterfall, auto-connect, edge cases", async 
 
   // 无 console 错误
   expect(consoleErrors).toEqual([]);
+  await page.screenshot({ path: testInfo.outputPath("trace-workspace.png"), fullPage: true });
+});
+
+test("trace ui: running details refresh and usage completeness stays visible", async ({ page }, testInfo) => {
+  const apiUrl = `http://127.0.0.1:${stub.port}/api/v1`;
+  const unexpectedRequests = [];
+  const run = {
+    run_id: "lifecycle-run",
+    agent_id: "test_agent",
+    session_id: "lifecycle-session",
+    prompt: "Observe an interrupted run",
+    status: "running",
+    started_at: "2026-10-11T00:00:00.000Z",
+    model_calls: 1,
+    tool_calls: 0,
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, completeness: "unknown" },
+    events: [{ event_id: "start", sequence: 1, type: "run_started", created_at: "2026-10-11T00:00:00.000Z" }],
+  };
+  await page.route(`${apiUrl}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    let data;
+    if (url.pathname.endsWith("/agents")) {
+      data = [{ agent_id: "test_agent", name: "Test Agent" }];
+    } else if (url.pathname.endsWith("/traces")) {
+      const { events, ...summary } = run;
+      data = [summary];
+    } else if (url.pathname.endsWith(`/traces/${run.run_id}`)) {
+      data = run;
+    } else {
+      unexpectedRequests.push(url.pathname);
+      return route.fulfill({ status: 404, json: { info: "unexpected endpoint" } });
+    }
+    return route.fulfill({ json: { code: 0, info: "ok", data } });
+  });
+  await page.addInitScript(
+    (url) => localStorage.setItem("forge-trace-settings", JSON.stringify({ apiUrl: url })),
+    apiUrl,
+  );
+  await page.goto("/", { waitUntil: "networkidle" });
+  const stat = (label) => page.locator(".stat").filter({ has: page.locator(".stat-label", { hasText: new RegExp(`^${label}$`) }) });
+  await expect(stat("Tokens")).toHaveText("TokensUnknown");
+  await expect(stat("Status")).toHaveText("Statusrunning");
+  await page.screenshot({ path: testInfo.outputPath("trace-running-unknown.png"), fullPage: true });
+
+  run.status = "interrupted";
+  run.completed_at = "2026-10-11T00:00:01.000Z";
+  run.usage = { input_tokens: 12, output_tokens: 5, total_tokens: 17, completeness: "partial" };
+  run.events_dropped = 3;
+  run.events.push({ event_id: "end", sequence: 2, type: "run_interrupted", reason: "Process restarted", created_at: run.completed_at });
+  await page.locator("#refresh-history").click();
+  await expect(stat("Tokens")).toHaveText("Tokens17 (partial)");
+  await expect(stat("Status")).toHaveText("Statusinterrupted");
+  await expect(stat("Events dropped")).toHaveText("Events dropped3");
+  await expect(page.locator(".event-title").last()).toHaveText("Run interrupted");
+  await page.screenshot({ path: testInfo.outputPath("trace-interrupted-partial-usage.png"), fullPage: true });
+
+  run.status = "cancelled";
+  run.usage = { input_tokens: 0, output_tokens: 0, total_tokens: 0, completeness: "complete" };
+  run.events[1] = { ...run.events[1], event_id: "cancelled", type: "run_cancelled" };
+  await page.locator("#refresh-history").click();
+  await expect(stat("Tokens")).toHaveText("Tokens0");
+  await expect(stat("Status")).toHaveText("Statuscancelled");
+  await expect(page.locator(".event-title").last()).toHaveText("Run cancelled");
+  await page.screenshot({ path: testInfo.outputPath("trace-cancelled-zero.png"), fullPage: true });
+  run.status = "failed";
+  run.events[1] = { ...run.events[1], type: "run_failed", error_message: "Expected model failure" };
+  await page.locator("#refresh-history").click();
+  await expect(stat("Status")).toHaveText("Statusfailed");
+  await expect(page.locator(".event-title").last()).toHaveText("Run failed");
+  await page.screenshot({ path: testInfo.outputPath("trace-failed.png"), fullPage: true });
+  expect(unexpectedRequests).toEqual([]);
 });

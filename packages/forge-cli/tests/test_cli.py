@@ -1,7 +1,5 @@
-
-from typer.testing import CliRunner
-
 from kbws_forge_cli.cli import app
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -10,7 +8,7 @@ def test_version_matches_package_release() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "forge 1.2.2"
+    assert result.output.strip() == "forge 2.0.0"
 
 
 def _invoke_in(tmp_path, monkeypatch, *args):
@@ -30,12 +28,14 @@ def test_init_default_template_is_service_agent(tmp_path, monkeypatch) -> None:
     assert (proj / "app" / "core").is_dir()
     assert (proj / "agents").is_dir()
     assert (proj / ".env.example").is_file()
+    assert not (proj / "evals").exists()
+    assert not (proj / "app" / "api" / "v1" / "evals.py").exists()
 
     from kbws_forge_cli.generator import RUNTIME_MIN_VERSION
 
     pyproject = (proj / "pyproject.toml").read_text(encoding="utf-8")
     assert 'name = "my-agent"' in pyproject
-    assert f"kbws-forge-runtime[openai]>={RUNTIME_MIN_VERSION}" in pyproject
+    assert f"kbws-forge-runtime[openai]>={RUNTIME_MIN_VERSION},<3" in pyproject
     assert "forge trace" in (proj / "README.md").read_text(encoding="utf-8")
 
 
@@ -102,6 +102,12 @@ def test_templates_discovered_dynamically() -> None:
     assert "base-agent" in templates
 
 
+def test_removed_eval_command_is_not_registered() -> None:
+    result = runner.invoke(app, ["eval", "run", "example"])
+    assert result.exit_code != 0
+    assert "No such command" in " ".join(result.output.split())
+
+
 def test_init_refuses_non_empty_existing_dir(tmp_path, monkeypatch) -> None:
     existing = tmp_path / "my-agent"
     existing.mkdir()
@@ -155,7 +161,7 @@ def test_trace_command_rejects_invalid_api_url() -> None:
     result = runner.invoke(app, ["trace", "--api-url", "file:///tmp/agent"])
 
     assert result.exit_code == 1
-    assert "absolute http:// or https:// URL" in result.output
+    assert "absolute http:// or https:// URL" in " ".join(result.output.split())
 
 
 def test_runtime_min_version_tracks_local_runtime() -> None:
@@ -169,10 +175,14 @@ def test_runtime_min_version_tracks_local_runtime() -> None:
         Path(__file__).resolve().parents[2] / "forge-runtime" / "pyproject.toml"
     )
     match = re.search(
-        r'^version = "([^"]+)"', runtime_pyproject.read_text(encoding="utf-8"), re.MULTILINE
+        r'^version = "([^"]+)"',
+        runtime_pyproject.read_text(encoding="utf-8"),
+        re.MULTILINE,
     )
     assert match, "forge-runtime pyproject missing version"
     local_version = match.group(1)
+    assert RUNTIME_MIN_VERSION == "2.0.0"
+    assert _version_tuple(local_version)[0] == 2
     assert _version_tuple(RUNTIME_MIN_VERSION) <= _version_tuple(local_version), (
         f"RUNTIME_MIN_VERSION {RUNTIME_MIN_VERSION} exceeds local runtime {local_version}; "
         "bump RUNTIME_MIN_VERSION only after the runtime release"

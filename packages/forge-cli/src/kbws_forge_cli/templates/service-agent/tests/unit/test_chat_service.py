@@ -82,3 +82,25 @@ def test_sse_frame_serializes_pydantic() -> None:
     assert frame.startswith("event: data\n")
     assert '"code":0' in frame
     assert frame.endswith("\n\n")
+
+
+async def test_closing_sse_stream_immediately_cancels_runtime() -> None:
+    import json
+
+    from kbws_forge_runtime import AgentInfo, AgentRuntime
+    from kbws_forge_runtime.workflow import build_chat_graph
+    from langchain_core.language_models.fake_chat_models import FakeListChatModel
+
+    from app.services.chat_service import ChatService
+
+    runtime = AgentRuntime()
+    runtime.register_agent(
+        AgentInfo(agent_id="test", name="Test"),
+        build_chat_graph(FakeListChatModel(responses=["ok"]), instruction="Reply"),
+    )
+    stream = ChatService(runtime).chat_stream("test", "user", "hello", None)
+    frame = await anext(stream)
+    run_id = json.loads(frame.split("data: ", 1)[1])["run_id"]
+    await stream.aclose()
+    assert runtime.active_run_ids() == ()
+    assert runtime.trace_store.get_run(run_id)["status"] == "cancelled"

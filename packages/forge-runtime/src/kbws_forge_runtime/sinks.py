@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
+from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from kbws_forge_runtime.models.events import ChatEvent
+
+logger = logging.getLogger("kbws_forge_runtime")
 
 
 class EventSink(Protocol):
@@ -58,8 +63,10 @@ class TraceStore(EventSink):
         self,
         max_runs: int = 200,
         persist_path: str | Path | None = None,
+        max_events_per_run: int = 2000,
     ) -> None:
         self._max_runs = max(1, int(max_runs))
+        self._max_events_per_run = max(2, int(max_events_per_run))
         self._persist_path = Path(persist_path) if persist_path else None
         self._runs: dict[str, dict[str, Any]] = {}
         self._order: list[str] = []
@@ -91,6 +98,12 @@ class TraceStore(EventSink):
                     "tool_calls": 0,
                     "usage": {},
                     "events": [],
+                    "events_dropped": 0,
+                    "_finished_models": 0,
+                    "_known_models": 0,
+                    "_partial_usage": False,
+                    "_cost_models": 0,
+                    "_cost_usd": 0,
                 }
                 self._runs[run_id] = run
                 self._order.append(run_id)
@@ -102,6 +115,38 @@ class TraceStore(EventSink):
             if run["started_at"] is None:
                 run["started_at"] = data.get("created_at")
             run["events"].append(data)
+            self._trim_events(run)
+            if event_type == "model_started":
+                run["model_calls"] += 1
+            elif event_type == "tool_started":
+                run["tool_calls"] += 1
+            elif event_type in {"model_finished", "model_failed"}:
+                run["_finished_models"] += 1
+                run["model_calls"] = max(run["model_calls"], run["_finished_models"])
+                usage = data.get("usage") or {}
+                completeness = usage.get("completeness", "unknown")
+                if completeness != "unknown":
+                    run["_known_models"] += 1
+                if completeness == "partial":
+                    run["_partial_usage"] = True
+                for key in ("input_tokens", "output_tokens", "total_tokens"):
+                    run["usage"][key] = run["usage"].get(key, 0) + usage.get(key, 0)
+                if usage.get("cost_usd") is not None:
+                    run["_cost_models"] += 1
+                    run["_cost_usd"] += usage["cost_usd"]
+            if event_type.startswith("model_"):
+                run["usage"]["completeness"] = (
+                    "complete"
+                    if run["_known_models"] == run["model_calls"] and not run["_partial_usage"]
+                    else "partial"
+                    if run["_known_models"]
+                    else "unknown"
+                )
+                run["usage"]["cost_usd"] = (
+                    run["_cost_usd"]
+                    if run["_cost_models"] == run["model_calls"] and run["_cost_models"]
+                    else None
+                )
 
             if event_type == "message_created" and not run["prompt"]:
                 message = data.get("message")
@@ -111,18 +156,24 @@ class TraceStore(EventSink):
             if terminal is not None:
                 run["status"] = terminal
                 run["completed_at"] = data.get("created_at") or run["completed_at"]
-                run["duration_ms"] = data.get("duration_ms") or run["duration_ms"]
-                run["model_calls"] = data.get("model_calls") or run["model_calls"]
-                run["tool_calls"] = data.get("tool_calls") or run["tool_calls"]
-                run["usage"] = data.get("usage") or run["usage"]
+                for key in ("duration_ms", "model_calls", "tool_calls", "usage"):
+                    if data.get(key) is not None:
+                        run[key] = data[key]
 
-        if terminal is not None:
-            self._persist()
+        self._persist()
+
+    def _trim_events(self, run: dict[str, Any]) -> None:
+        excess = len(run["events"]) - self._max_events_per_run
+        if excess > 0:
+            del run["events"][1 : 1 + excess]
+            run["events_dropped"] = run.get("events_dropped", 0) + excess
 
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         """Summaries of recorded runs, newest first (no events payload)."""
         with self._lock:
-            selected = self._order if limit is None else self._order[-max(0, limit):]
+            if limit is not None and limit <= 0:
+                return []
+            selected = self._order if limit is None else self._order[-limit:]
             return [self._summary(self._runs[run_id]) for run_id in reversed(selected)]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
@@ -132,7 +183,7 @@ class TraceStore(EventSink):
             if run is None:
                 return None
             full = self._summary(run)
-            full["events"] = list(run["events"])
+            full["events"] = deepcopy(run["events"])
             return full
 
     def delete_run(self, run_id: str) -> bool:
@@ -151,7 +202,13 @@ class TraceStore(EventSink):
         self._persist()
 
     def _summary(self, run: dict[str, Any]) -> dict[str, Any]:
-        return {key: value for key, value in run.items() if key != "events"}
+        return deepcopy(
+            {
+                key: value
+                for key, value in run.items()
+                if key != "events" and not key.startswith("_")
+            }
+        )
 
     def _persist(self) -> None:
         if self._persist_path is None:
@@ -164,12 +221,16 @@ class TraceStore(EventSink):
                 tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
                 tmp.replace(self._persist_path)
             except OSError:
-                return  # 持久化是尽力而为，失败不阻断运行
+                logger.exception("failed to persist traces path=%s", self._persist_path)
 
     def _load(self) -> None:
         try:
             payload = json.loads(self._persist_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            logger.exception("failed to load traces path=%s", self._persist_path)
+            return
+        if not isinstance(payload, dict):
+            logger.error("invalid trace store path=%s", self._persist_path)
             return
         runs = payload.get("runs")
         order = payload.get("order")
@@ -178,14 +239,22 @@ class TraceStore(EventSink):
         self._runs = {
             key: value
             for key, value in runs.items()
-            if isinstance(key, str) and isinstance(value, dict) and "events" in value
+            if isinstance(key, str)
+            and isinstance(value, dict)
+            and isinstance(value.get("events"), list)
         }
         self._order = [
             key for key in (order if isinstance(order, list) else []) if key in self._runs
         ]
         self._order.extend(key for key in self._runs if key not in self._order)
         while len(self._order) > self._max_runs:
-            self._order.pop(0)
+            self._runs.pop(self._order.pop(0), None)
+        for run in self._runs.values():
+            self._trim_events(run)
+            if run.get("status") == "running":
+                run["status"] = "interrupted"
+                run["completed_at"] = datetime.now(UTC).isoformat()
+        self._persist()
 
 
 __all__ = ["EventSink", "InMemoryEventSink", "TraceStore"]

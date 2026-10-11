@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 from typing import Any
 from uuid import uuid4
 
@@ -92,31 +94,34 @@ class AgentRuntime:
         variables: dict[str, Any] | None = None,
         policy: RunPolicy | None = None,
     ) -> ChatResult:
-        async for event in self.chat_stream(
-            agent_id,
-            user_id,
-            messages,
-            session_id,
-            variables=variables,
-            policy=policy,
-        ):
-            if isinstance(event, RunCancelled):
-                raise RunError(event.reason, code=event.error_code)
-            if isinstance(event, RunFailed):
-                raise RunError(event.error_message, code=event.error_code)
-            if isinstance(event, RunFinished):
-                return ChatResult(
-                    run_id=event.run_id,
-                    agent_id=event.agent_id,
-                    user_id=user_id,
-                    session_id=event.session_id,
-                    message=event.message,
-                    parsed=event.parsed,
-                    duration_ms=event.duration_ms,
-                    model_calls=event.model_calls,
-                    tool_calls=event.tool_calls,
-                    usage=event.usage,
-                )
+        async with aclosing(
+            self.chat_stream(
+                agent_id,
+                user_id,
+                messages,
+                session_id,
+                variables=variables,
+                policy=policy,
+            )
+        ) as stream:
+            async for event in stream:
+                if isinstance(event, RunCancelled):
+                    raise RunError(event.reason, code=event.error_code)
+                if isinstance(event, RunFailed):
+                    raise RunError(event.error_message, code=event.error_code)
+                if isinstance(event, RunFinished):
+                    return ChatResult(
+                        run_id=event.run_id,
+                        agent_id=event.agent_id,
+                        user_id=user_id,
+                        session_id=event.session_id,
+                        message=event.message,
+                        parsed=event.parsed,
+                        duration_ms=event.duration_ms,
+                        model_calls=event.model_calls,
+                        tool_calls=event.tool_calls,
+                        usage=event.usage,
+                    )
         raise RunError("chat stream finished without a result")
 
     async def chat_parts(
@@ -159,6 +164,9 @@ class AgentRuntime:
         current_session_id = session_id or ""
         handle: AgentHandle | None = None
         context: RunContext | None = None
+        graph_stream = None
+        terminal_recorded = False
+        close_reason = "event stream closed by consumer"
 
         try:
             handle = self._registry.get(agent_id)
@@ -240,8 +248,11 @@ class AgentRuntime:
                     )
                     for plugin in self._plugins:
                         await plugin.after_agent(handle.info, result)
+                    terminal_recorded = True
                 await self._notify_event(event)
                 yield event
+                if terminal_recorded:
+                    return
         except RunCancelledError as exc:
             cancelled = RunCancelled(
                 run_id=run_id,
@@ -255,12 +266,19 @@ class AgentRuntime:
                 tool_calls=context.tool_calls if context is not None else 0,
                 usage=context.usage if context is not None else {},
             )
+            terminal_recorded = True
             await self._notify_event(cancelled)
             yield cancelled
+        except asyncio.CancelledError:
+            close_reason = "consumer task cancelled"
+            raise
         except Exception as exc:
             if handle is not None:
                 for plugin in self._plugins:
-                    await plugin.on_error(handle.info, exc)
+                    try:
+                        await plugin.on_error(handle.info, exc)
+                    except Exception:
+                        logger.exception("error observer failed plugin=%s", type(plugin).__name__)
             runtime_error = _find_runtime_error(exc)
             code = runtime_error.code if runtime_error is not None else "0001"
             failed = RunFailed(
@@ -275,10 +293,37 @@ class AgentRuntime:
                 tool_calls=context.tool_calls if context is not None else 0,
                 usage=context.usage if context is not None else {},
             )
+            terminal_recorded = True
             await self._notify_event(failed)
             yield failed
         finally:
-            self._active_runs.pop(run_id, None)
+            try:
+                if graph_stream is not None:
+                    token = bind_run_context(context)
+                    try:
+                        await graph_stream.aclose()
+                    except Exception:
+                        logger.exception("graph stream cleanup failed run_id=%s", run_id)
+                    finally:
+                        reset_run_context(token)
+            finally:
+                try:
+                    if context is not None and not terminal_recorded:
+                        await self._notify_event(
+                            RunCancelled(
+                                run_id=run_id,
+                                agent_id=agent_id,
+                                session_id=current_session_id,
+                                sequence=context.next_sequence(),
+                                reason=close_reason,
+                                duration_ms=context.elapsed_ms,
+                                model_calls=context.model_calls,
+                                tool_calls=context.tool_calls,
+                                usage=context.usage,
+                            )
+                        )
+                finally:
+                    self._active_runs.pop(run_id, None)
 
     def cancel(self, run_id: str, reason: str = "run cancelled") -> bool:
         context = self._active_runs.get(run_id)
@@ -302,7 +347,15 @@ class AgentRuntime:
                     event.run_id,
                 )
         for plugin in self._plugins:
-            await plugin.on_event(event)
+            try:
+                await plugin.on_event(event)
+            except Exception:
+                logger.exception(
+                    "event observer failed plugin=%s event_type=%s run_id=%s",
+                    type(plugin).__name__,
+                    event.type,
+                    event.run_id,
+                )
 
 
 def _find_runtime_error(error: BaseException) -> ForgeRuntimeError | None:

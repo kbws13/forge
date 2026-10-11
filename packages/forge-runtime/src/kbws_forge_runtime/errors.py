@@ -54,3 +54,7 @@ class ToolApprovalRequiredError(ForgeRuntimeError):
 
 class RunUsageUnavailableError(ForgeRuntimeError):
     code = "0012"
+
+
+class StructuredOutputError(ForgeRuntimeError):
+    code = "0013"

@@ -1,110 +1,66 @@
 # Forge
 
-> 自研 Agent 框架：运行时 SDK + 脚手架 CLI。企业里快速搭建、按场景定制 Agent 服务。
+Forge 是 Python Agent 服务的运行时 SDK 与 FastAPI 脚手架。MVP 聚焦项目生成、
+模型与工具调用、结构化输出、运行控制、token 用量和 Trace 日志。
 
-Forge 解决的是"从零搭一个 Agent 服务"的重复工作：架构分层、鉴权、日志、多环境配置、
-Prompt 组件化、agent 组织方式、运行轨迹审查、行为评估……这些能力被封装成开箱即用的
-脚手架，业务团队专注写自己的 agent 逻辑，而不是每次重造一套基础设施。
+## 边界与版本
 
-## 包含什么
+- [`kbws-forge-runtime`](packages/forge-runtime)：Agent、会话、Prompt、中间件、工具与类型化事件。
+- [`kbws-forge-cli`](packages/forge-cli)：`forge init` 生成服务，`forge trace` 查看运行轨迹。
+- CLI 2.0 生成的项目约束 `kbws-forge-runtime>=2.0.0,<3`。两个包独立安装和发布。
+- 2.0 移除 Eval 引擎、CLI、API 和界面；普通单元、接口、集成及浏览器测试保留。
+- 项目管理、人工审批、设备调度、业务验收和报告属于使用方，不进入 Forge。
 
-| 包 | PyPI | 职责 |
-| --- | --- | --- |
-| [`packages/forge-runtime`](packages/forge-runtime) | [kbws-forge-runtime](https://pypi.org/project/kbws-forge-runtime/) | 运行时 SDK：AgentRuntime、组件化 Prompt、模型中间件、结构化输出、agent 目录约定、workflow builders、工具/MCP/技能、类型化事件流、全量 trace 记录、**代码优先评估引擎**（EvalSuite/Grader/EvalRunner：确定性 grader + LLM-judge、live/replay 双模式、JSONL 数据集、按 run_id 关联） |
-| [`packages/forge-cli`](packages/forge-cli) | [kbws-forge-cli](https://pypi.org/project/kbws-forge-cli/) | 开发 CLI：`forge init` 生成完整分层服务，`forge trace` 浏览器审查运行轨迹，`forge eval` 评估/回归/CI 门禁 |
-
-**版本配套**：CLI 发版时锁定生成项目所需 runtime 的最低版本（`RUNTIME_MIN_VERSION`，
-有测试防漂移）——生成的任何项目安装的 runtime 一定包含模板代码用到的 API。
+已有 1.x 项目升级前阅读 [迁移说明](docs/migration-v2.md)；版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 ## 快速开始
 
+需要 Python 3.13+ 和 [uv](https://docs.astral.sh/uv/)。
+
 ```bash
-pip install kbws-forge-cli
-forge init my-agent          # 交互式生成项目（Vite 风格）
+pip install "kbws-forge-cli>=2,<3"
+forge init my-agent -t service-agent
 cd my-agent
-uv sync                      # 自动安装匹配的 kbws-forge-runtime
+uv sync
+# 复制 .env.example 为 .env，设置 API_KEY 和 DEEPSEEK_* 配置
 uv run uvicorn app.main:app --reload
-# 另开终端，在本地浏览器审查 Agent 运行轨迹与评估结果（ADK/LangSmith 风格面板）
-forge trace --api-url http://127.0.0.1:8000/api/v1
 ```
 
-生成的即是可运行、可测试、可部署的服务骨架：业务聚合层（`agents/`）+ 技术分层
-（`app/`）+ 评估层（`evals/`），内置全局异常、统一响应、API Key 鉴权、多环境配置、
-日志持久化、分层测试，并自带模型中间件、结构化输出与评估套件的示例。
+另开终端运行 `forge trace --api-url http://127.0.0.1:8000/api/v1`。
+`service-agent` 提供分层 FastAPI 服务、鉴权、日志、示例 Agent 和测试；
+`base-agent` 仅提供最小 FastAPI Hello World，不包含 Trace API。
+模型名和 API 地址由使用方配置，不能将兼容接口等同于已完成真实模型验证。
 
-## Trace 面板
+## Token 与 Trace
 
-`forge trace` 启动一个只监听 `127.0.0.1` 的浏览器面板，用于审查 Agent 执行过程，
-界面结构参考 Google ADK 与 LangSmith：
+Trace 面板查看会话、逐轮对话、模型/工具事件、耗时、用量和原始 JSON。
+服务端以 `run_id` 关联运行，通过 `/api/v1/traces` 查询。
 
-- **会话列表**：服务端记录的所有会话（按最新活动排序，可过滤/删除）
-- **Turns 面板**：会话内逐轮对话（状态/消息/回复 + **评估徽章**），几十轮也能滚动审查
-- **执行树**：选中一轮查看其完整执行流——Invocation 头（耗时/模型/工具/token 统计）、
-  Chrome F12 式共享时间轴（刻度标尺 + 瀑布条 + 树形连接线）、事件级详情与原始 JSON
-- **Eval tab**：选中 run 的逐 grader 得分与失败原因；**Evals 视图**（顶栏切换）浏览
-  全部评估历史，点击失败的 case 直接跳进对应 run 的执行流
-- **全量 trace**：任何客户端（curl / Yaak / 脚本）发起的 run 都会被服务端记录到
-  `logs/traces.json`（重启不丢），面板自动连接 + 定时刷新即可看到，无需手动操作
+- Trace 默认保存在 `logs/traces.json`，逐事件原子替换文件；记录有数量上限。
+- 仅支持单进程写入；部署使用一个 worker，不让多个进程共享该文件。
+- 重启后未完成的运行标为 `interrupted`，不会自动恢复或重放。
+- 原子替换不等于 `fsync` 持久性；断电、磁盘故障和写入失败可能丢失记录。
+- 用量区分已知、未知及部分已知；未知不能解释为零，部分用量不能解释为完整消耗。
+- 保留供应商提供的 token 数据，不内置价格表、费用推算或计费平台。
 
-## 评估与回归（Eval）
+Trace 可能包含输入、输出和工具参数，应按应用要求控制访问与保留周期。
+运行轨迹持久化也不代表会话内存和业务任务能够恢复。
 
-**代码优先的评估**：`evals/` 目录下一个 .py 文件 = 一个 `EvalSuite`（同 `agents/` 模式，
-启动自动发现、不执行任何 case）。内置确定性 grader（`exact / contains / regex /
-json_schema / tool_trajectory`），可选 `llm_judge`；结果三态（passed / failed /
-not_evaluated），与 `run_id` 关联——评估只记录、**绝不拦截或影响业务调用**。
+## 仓库与开发
+
+`packages/forge-runtime/` 放 SDK；`packages/forge-cli/` 放生成器、模板和 Trace UI；
+`docs/` 放迁移文档。根目录通过 uv workspace 管理依赖。
 
 ```bash
-# 跑评估 + CI 门禁 + JUnit 报告（--fail-under 不达标 exit 1）
-forge eval run smoke --fail-under 0.9 --report junit -o out/
-# replay：对已记录的 run 重打分，零外部调用、零成本（CI 用）
-forge eval run smoke --mode replay
-# 回归比较：基线 vs 候选，输出逐 case 差异与回归清单（有回归 exit 1）
-forge eval compare --baseline <eval_run_id> --live
-# 数据集交换：导出为 JSONL（grader 以名字序列化），导入生成代码优先套件
-forge eval dataset export smoke -o cases.jsonl
-forge eval dataset import cases.jsonl --name golden --agent <agent_id>
-```
-
-评估 API（服务端，需 API Key）：`GET /evals`、`POST /evals/{suite}/run`、
-`GET /evals/runs[/{id}]`、`GET /traces/{run_id}/eval`。
-
-```bash
-# 查看 trace 查询 API
-curl -H "X-API-Key: <key>" http://127.0.0.1:8000/api/v1/traces
-curl -H "X-API-Key: <key>" http://127.0.0.1:8000/api/v1/traces/<run_id>
-```
-
-## 设计理念
-
-- **脚手架优先**：框架的价值在于"生成即用、按需定制"——`forge init` 产出完整骨架，业务代码（agent/prompt/tools/evals）在自己的目录里演进，不碰框架层
-- **代码化 Prompt**：prompt 是 Python 组件（`Message`/`Prompt`/`compose`），可组合、复用、单测，不用配置文件维护
-- **agent 目录约定**：一个 agent = 一个目录（`agent.py` + `prompts.py` + `tools.py`），`load_agents` 自动发现注册——加 agent 不加代码
-- **可观测与可验证**：所有 run 全量记录（TraceStore）→ 浏览器审查执行流；行为断言（eval）→ 量化质量、回归门禁；评估与 trace 都是观测层，不进入业务执行路径
-- **框架无关的运行时**：SDK 不绑定任何 Web 框架；HTTP 层由脚手架模板承载，换协议不换业务
-- **场景可定制**：模板、prompt 组件、工具/MCP/技能、插件钩子都是扩展点，按企业场景自由组合
-
-## 仓库结构
-
-```
-forge/
-├── packages/
-│   ├── forge-runtime/       # SDK：agent 运行时 + 评估引擎（发布到 PyPI）
-│   └── forge-cli/           # CLI：脚手架生成器 + trace/eval 工具（发布到 PyPI）
-├── pyproject.toml           # uv workspace 根
-├── uv.lock
-└── README.md
-```
-
-## 开发
-
-```bash
-uv sync --all-extras
+uv sync --all-packages --all-extras
 uv run pytest packages/forge-runtime/tests
 uv run pytest packages/forge-cli/tests
-
-# Trace 面板浏览器 e2e（需 Chrome + Node，默认跳过）：
-FORGE_E2E=1 uv run pytest packages/forge-cli/tests/test_e2e_trace_ui.py -v
 ```
+
+测试按以上顺序串行执行。普通测试使用 fake model；真实供应商测试默认跳过。
+浏览器测试需 Node、npm 和 Chrome/Chromium，设置 `FORGE_E2E=1` 后运行
+`uv run pytest packages/forge-cli/tests/test_e2e_trace_ui.py -v`。
+真实 DeepSeek 调用和人工视觉验收需单独执行，不能由普通测试通过推断。
 
 ## License
 

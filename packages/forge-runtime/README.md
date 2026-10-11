@@ -23,21 +23,25 @@ while keeping the core API clean, typed and free of web-framework coupling.
 ## Install
 
 ```bash
-pip install kbws-forge-runtime
+pip install "kbws-forge-runtime>=2,<3"
 # optional integrations
-pip install "kbws-forge-runtime[mcp]"      # MCP tool loading
-pip install "kbws-forge-runtime[openai]"   # OpenAI-compatible chat models
+pip install "kbws-forge-runtime[mcp]>=2,<3"      # MCP tool loading
+pip install "kbws-forge-runtime[openai]>=2,<3"   # OpenAI-compatible chat models
 ```
 
 Requires Python ≥ 3.13.
 
-> **v1.0.0**: the public API (`AgentRuntime`, prompts, middlewares,
-> structured output, workflow builders, tools, plugins) is stable.
+Version 2 removes the Eval package and all Eval exports. Chat, tools, structured
+output, execution controls and tracing remain the runtime's scope. CLI 2.0
+generates services requiring runtime `>=2.0.0,<3`. See the
+[migration guide](https://github.com/kbws13/forge/blob/main/docs/migration-v2.md)
+before upgrading existing applications.
 
 ## Quick start
 
 ```python
 import asyncio
+import os
 
 from langchain_openai import ChatOpenAI
 
@@ -46,7 +50,12 @@ from kbws_forge_runtime.workflow import build_chat_graph
 
 
 async def main() -> None:
-    model = ChatOpenAI(model="deepseek-chat", api_key="sk-...")
+    model = ChatOpenAI(
+        model=os.environ["DEEPSEEK_MODEL"],
+        api_key=os.environ["DEEPSEEK_API_KEY"],
+        base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        stream_usage=True,
+    )
 
     runtime = AgentRuntime()
     runtime.register_agent(
@@ -132,7 +141,33 @@ All events share `run_id` / `agent_id` / `session_id` and a discriminated `type`
 Events also carry `event_id`, UTC `created_at` and a run-local `sequence`. Action
 events include call/parent IDs and duration; terminal events include model/tool
 call counts and accumulated usage. These fields form the data contract for a
-future ADK-style run/evaluation UI.
+Trace UI and application observability integrations.
+
+### Trace and usage boundaries
+
+`TraceStore` records model, tool and terminal events in memory by default.
+Pass `persist_path` to enable file storage; generated `service-agent` projects
+use `logs/traces.json`. History is bounded and persisted with atomic replacement
+after each event. Only one process may write a trace file; use one server worker. Runs
+loaded without a terminal event become `interrupted` after restart. This is a
+record of interruption, not a resume/replay mechanism or a durable task queue.
+Session memory is separate and is not restored by loading traces.
+Defaults retain 200 runs and 2,000 events per run. Event pruning preserves the
+first and newest events; `events_dropped` marks incomplete evidence. Store large
+attachments separately and pass references instead of embedding image data.
+
+Atomic replacement is not fsync durability: power loss, disk failures and
+write errors can still lose trace data. Sink errors are logged and isolated
+from the business run. Protect trace access because inputs, tool arguments
+and outputs may contain application data.
+
+Token usage can be known, unknown or partial across calls. Missing metadata
+must not be treated as zero; a partial total includes only reported usage.
+Request streaming usage from compatible providers and verify their actual
+responses. Forge has no pricing catalogue or billing engine; supplied cost
+metadata can still be used by existing execution policies. Run-level cost is
+`null` unless all model attempts report cost; known token subtotals remain visible.
+Token/cost budgets fail closed when required measurements are incomplete.
 
 ### Composable prompts
 
@@ -288,7 +323,7 @@ Exceptions inherit `ForgeRuntimeError` and carry a stable `code`:
 ## Development
 
 ```bash
-uv sync --all-extras
+uv sync --all-packages --all-extras
 uv run pytest packages/forge-runtime/tests          # unit + API (fake models)
 RUN_REAL_PROVIDER_TESTS=1 uv run pytest packages/forge-runtime/tests  # + real LLM calls
 ```

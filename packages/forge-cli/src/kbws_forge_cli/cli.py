@@ -11,7 +11,6 @@ import typer
 from pydantic import ValidationError
 from rich.console import Console
 
-from kbws_forge_cli.eval_commands import eval_app
 from kbws_forge_cli.generator import Generator, ProjectSpec
 from kbws_forge_cli.trace_server import (
     DEFAULT_API_URL,
@@ -27,7 +26,9 @@ DEFAULT_TEMPLATE = "service-agent"
 def _available_templates() -> list[str]:
     """动态扫描模板目录，新增模板自动出现在选择列表里。"""
     return sorted(
-        d.name for d in TEMPLATES_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")
+        d.name
+        for d in TEMPLATES_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
     )
 
 
@@ -76,7 +77,6 @@ app = typer.Typer(
     add_completion=False,
     invoke_without_command=True,
 )
-app.add_typer(eval_app, name="eval")
 
 
 @app.callback()
@@ -94,7 +94,8 @@ def main(
 @app.command("init")
 def init_command(
     name: str | None = typer.Argument(
-        None, help="Name of the agent project, e.g. my-agent. Omit for interactive input."
+        None,
+        help="Name of the agent project, e.g. my-agent. Omit for interactive input.",
     ),
     template: str | None = typer.Option(
         None,
